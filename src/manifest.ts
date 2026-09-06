@@ -14,6 +14,15 @@ const MANIFEST_DIR = ".omc";
 const MANIFEST_FILE = ".sync-manifest";
 
 /**
+ * The manifest's own filename (relative to `.omc/`), exported so tracks can
+ * recognize and specially handle the manifest file itself when it travels as
+ * part of the sync payload (see push/restore/pull in both tracks) — it must
+ * never be treated as an ordinary manifest-listed content file (no secret
+ * scan, no wholesale overwrite on restore/pull, union-merged instead).
+ */
+export const MANIFEST_FILENAME = MANIFEST_FILE;
+
+/**
  * Returns the default manifest path (`.omc/.sync-manifest`) relative to the
  * given repo root, defaulting to the git repository top level containing
  * the current working directory (via `resolveRepoRoot()`).

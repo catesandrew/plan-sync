@@ -1,10 +1,12 @@
 import { parseTrack } from "../args";
+import { resolveRepoRoot } from "../repo-root";
+import { getDefaultTrack } from "../sync-config";
 import * as shadowUninstall from "../tracks/shadow/uninstall";
 
 export function run(args: string[]): void {
   let track, rest;
   try {
-    ({ track, rest } = parseTrack(args));
+    ({ track, rest } = parseTrack(args, getDefaultTrack(resolveRepoRoot())));
   } catch (err) {
     throw new Error(`uninstall: ${(err as Error).message}`);
   }

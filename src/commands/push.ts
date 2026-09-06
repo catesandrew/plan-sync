@@ -1,11 +1,13 @@
 import { parseTrack } from "../args";
+import { resolveRepoRoot } from "../repo-root";
+import { getDefaultTrack } from "../sync-config";
 import * as siblingPush from "../tracks/sibling/push";
 import * as shadowPush from "../tracks/shadow/push";
 
 export function run(args: string[]): void {
   let track, rest;
   try {
-    ({ track, rest } = parseTrack(args));
+    ({ track, rest } = parseTrack(args, getDefaultTrack(resolveRepoRoot())));
   } catch (err) {
     throw new Error(`push: ${(err as Error).message}`);
   }

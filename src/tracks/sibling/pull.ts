@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { readManifest, defaultManifestPath } from "../../manifest";
+import { addToManifest, readManifest, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { safeCopyFile, safeRemove } from "../../safe-write";
 import { siblingConfigPath, type SiblingConfig } from "./init";
@@ -90,6 +90,55 @@ export function run(_args: string[]): void {
     );
   }
 
-  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+  // Merge the incoming manifest (if the clone has one) into the local
+  // manifest BEFORE the copy-in step below, and re-read the local manifest
+  // fresh afterward — so a completely fresh machine (empty local manifest,
+  // never `allow`-ed anything) still gets both the manifest AND the file
+  // content it lists from a single `pull`, rather than requiring the user to
+  // manually `allow` each path first and pull a second time.
+  const localManifestPath = defaultManifestPath(repoRoot);
+  mergeIncomingManifestFromClone(clonePath, localManifestPath);
+
+  const manifestPaths = readManifest(localManifestPath);
   syncManifestFilesFromClone(repoRoot, clonePath, manifestPaths);
+}
+
+/**
+ * If the clone has its own `.sync-manifest` (pushed there by a peer machine
+ * running the updated `push`), UNION-merges each of its valid lines into the
+ * local manifest via `addToManifest` — additive only, so a pre-existing
+ * local-only entry the incoming manifest doesn't mention is never removed or
+ * overwritten. Mirrors `readManifest`'s blank/comment-skipping parse rules.
+ */
+function mergeIncomingManifestFromClone(
+  clonePath: string,
+  localManifestPath: string,
+): void {
+  const incomingPath = path.join(clonePath, MANIFEST_FILENAME);
+  const stat = fs.lstatSync(incomingPath, { throwIfNoEntry: false });
+  if (!stat) {
+    return;
+  }
+  if (stat.isSymbolicLink()) {
+    process.stderr.write(
+      `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+    );
+    return;
+  }
+
+  const raw = fs.readFileSync(incomingPath, "utf8");
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  for (const line of lines) {
+    try {
+      addToManifest(localManifestPath, line);
+    } catch (err) {
+      process.stderr.write(
+        `omc-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
+      );
+    }
+  }
 }

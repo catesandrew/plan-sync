@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
+import { writeDefaultTrack } from "../../sync-config";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 
 const EXCLUDE_LINE = ".omc/";
@@ -32,6 +33,7 @@ export function run(args: string[]): void {
   ensureBareRepo(shadowRepoPath);
   configureShadowRepo(shadowRepoPath, repoRoot);
   wireOrigin(shadowRepoPath, repoRoot, remoteFlag);
+  writeDefaultTrack(repoRoot, "shadow");
 }
 
 /**

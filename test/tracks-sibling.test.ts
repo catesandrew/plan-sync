@@ -136,7 +136,9 @@ describe("sibling track", () => {
       .trim()
       .split("\n")
       .sort();
-    expect(trackedFiles).toEqual(["notes.md", "plans/foo.md"]);
+    // The manifest itself now travels as part of the payload (Feature:
+    // manifest auto-included in sync), alongside the allowed files.
+    expect(trackedFiles).toEqual([".sync-manifest", "notes.md", "plans/foo.md"]);
 
     const log = git(["log", "--oneline"], clonePath);
     expect(log.trim().split("\n").length).toBeGreaterThanOrEqual(1);
@@ -151,7 +153,7 @@ describe("sibling track", () => {
       .trim()
       .split("\n")
       .sort();
-    expect(remoteTrackedFiles).toEqual(["notes.md", "plans/foo.md"]);
+    expect(remoteTrackedFiles).toEqual([".sync-manifest", "notes.md", "plans/foo.md"]);
   });
 
   it("push is a no-op (no error) when nothing new is staged", () => {

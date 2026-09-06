@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFlag } from "../../args";
-import { defaultManifestPath, readManifest } from "../../manifest";
+import {
+  addToManifest,
+  defaultManifestPath,
+  MANIFEST_FILENAME,
+  readManifest,
+} from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { safeRemove, safeWriteFile } from "../../safe-write";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
@@ -67,12 +72,19 @@ export function run(args: string[]): void {
   const omcRoot = path.join(repoRoot, ".omc");
 
   for (const relPath of targetPaths) {
+    if (relPath === MANIFEST_FILENAME) {
+      // The manifest itself is handled specially below via a union-merge
+      // into the LOCAL manifest, never wholesale-overwritten from the
+      // incoming tree like an ordinary file — see mergeIncomingManifest.
+      continue;
+    }
     const content = readBlob(gitDir, refName, relPath);
     const destPath = path.join(repoRoot, ".omc", relPath);
     safeWriteFile(omcRoot, destPath, content);
   }
 
-  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+  const localManifestPath = defaultManifestPath(repoRoot);
+  const manifestPaths = readManifest(localManifestPath);
   for (const relPath of manifestPaths) {
     if (targetSet.has(relPath)) {
       continue;
@@ -86,6 +98,44 @@ export function run(args: string[]): void {
     }
     const destPath = path.join(repoRoot, ".omc", relPath);
     safeRemove(omcRoot, destPath);
+  }
+
+  if (targetSet.has(MANIFEST_FILENAME)) {
+    mergeIncomingManifest(gitDir, refName, localManifestPath);
+  }
+}
+
+/**
+ * Parses the incoming manifest blob's raw lines (same skip-blank/skip-
+ * comment rules as `readManifest`) and UNION-merges each valid line into the
+ * local manifest via `addToManifest` — additive only, so a pre-existing
+ * local-only entry the incoming manifest doesn't mention is never removed or
+ * overwritten. Reads via `readBlob` (git's own object store), so there's no
+ * filesystem symlink-escape surface to guard against here.
+ */
+function mergeIncomingManifest(
+  gitDir: string,
+  refName: string,
+  localManifestPath: string,
+): void {
+  const raw = readBlob(gitDir, refName, MANIFEST_FILENAME).toString("utf8");
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+  for (const line of lines) {
+    try {
+      addToManifest(localManifestPath, line);
+    } catch (err) {
+      // A hand-edited or otherwise malformed incoming manifest could contain
+      // an out-of-bounds entry (absolute path / `../` traversal);
+      // addToManifest fails closed on those. Skip just that one line with a
+      // warning rather than aborting the whole restore.
+      process.stderr.write(
+        `omc-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
+      );
+    }
   }
 }
 

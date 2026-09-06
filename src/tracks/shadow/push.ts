@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { defaultManifestPath, manifestExists, readManifest } from "../../manifest";
+import {
+  defaultManifestPath,
+  manifestExists,
+  MANIFEST_FILENAME,
+  readManifest,
+} from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 import { scanForSecrets } from "./scan";
@@ -144,6 +149,40 @@ export function run(_args: string[]): void {
       );
 
       surviving.push(relPath);
+    }
+
+    // Unconditionally stage the manifest's own current raw content (read
+    // directly off disk, not through readManifest()'s parsed/filtered list),
+    // so a second machine's restore/pull gets the scope list back too, not
+    // just the file content. Never scanned for secrets — it's just a list of
+    // relative path strings. Skipped gracefully if the manifest file doesn't
+    // exist at all yet. Deliberately excluded from `surviving` (which counts
+    // only actual manifest-listed content files), so the "nothing survived
+    // the scan" / "nothing to push" early-return below is unaffected by the
+    // manifest always being staged into this throwaway index.
+    if (fs.existsSync(manifestPath)) {
+      if (fs.lstatSync(manifestPath).isSymbolicLink()) {
+        process.stderr.write(
+          `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+        );
+      } else {
+        const manifestBlobSha = execFileSync(
+          "git",
+          [gitDir, "hash-object", "-w", manifestPath],
+          { encoding: "utf8" },
+        ).trim();
+        execFileSync(
+          "git",
+          [
+            gitDir,
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            `100644,${manifestBlobSha},${MANIFEST_FILENAME}`,
+          ],
+          { env: indexEnv, stdio: "pipe" },
+        );
+      }
     }
 
     const treeSha = execFileSync("git", [gitDir, "write-tree"], {

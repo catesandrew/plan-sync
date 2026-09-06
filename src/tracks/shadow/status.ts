@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { parseFlag } from "../../args";
+import { defaultManifestPath, readManifest } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 
@@ -40,6 +42,10 @@ export function run(args: string[]): void {
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
   const refName = `refs/omc/${projectId}/data`;
+
+  tryFetchRef(gitDir, refName);
+  printPerFileStatus(repoRoot, gitDir, refName);
+
   const lastPushIso = tryGetLastPushTimestamp(gitDir, refName);
 
   process.stdout.write(`omc-sync: shadow repo initialized at ${shadowRepoPath}\n`);
@@ -63,6 +69,109 @@ export function run(args: string[]): void {
   }
 
   process.stdout.write("OK\n");
+}
+
+/**
+ * Best-effort fetch of `refName` from `origin` into the matching local ref
+ * name, mirroring `restore.ts`'s same-named helper, so the per-file report
+ * reflects the remote's current tip even on a machine that only ever
+ * `init`-ed/`restore`-d (never pushed) and so has no local mirror ref yet.
+ * Failure (offline, no origin, ref never pushed) is tolerated silently —
+ * the per-file comparisons below already treat an unresolvable ref entry as
+ * "not present in the ref".
+ */
+function tryFetchRef(gitDir: string, refName: string): void {
+  try {
+    execFileSync("git", [gitDir, "fetch", "origin", `+${refName}:${refName}`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    // Best-effort only.
+  }
+}
+
+/**
+ * Reports each manifest-listed path's sync state relative to the ref tip:
+ *   - "in sync": present locally and in the ref, with matching content.
+ *   - "pending (local changes)": present in both, but content differs.
+ *   - "pending (never synced)": present locally, absent from the ref.
+ *   - "missing locally": present in the ref, absent locally.
+ * Prints one line per path, then a one-line summary count.
+ */
+function printPerFileStatus(repoRoot: string, gitDir: string, refName: string): void {
+  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+
+  let inSync = 0;
+  let pendingLocal = 0;
+  let pendingNeverSynced = 0;
+  let missingLocally = 0;
+
+  for (const relPath of manifestPaths) {
+    const localPath = path.join(repoRoot, ".omc", relPath);
+    const localExists = fs.existsSync(localPath);
+    const refSha = tryLsTreeBlobSha(gitDir, refName, relPath);
+
+    let state: string;
+    if (localExists && refSha) {
+      const localSha = tryHashObject(gitDir, localPath);
+      if (localSha && localSha === refSha) {
+        state = "in sync";
+        inSync++;
+      } else {
+        state = "pending (local changes)";
+        pendingLocal++;
+      }
+    } else if (localExists) {
+      state = "pending (never synced)";
+      pendingNeverSynced++;
+    } else if (refSha) {
+      state = "missing locally";
+      missingLocally++;
+    } else {
+      // Neither locally present nor ever synced — closest fit of the four
+      // reported states is "never synced".
+      state = "pending (never synced)";
+      pendingNeverSynced++;
+    }
+
+    process.stdout.write(`omc-sync: ${relPath}: ${state}\n`);
+  }
+
+  process.stdout.write(
+    `omc-sync: ${manifestPaths.length} file(s) tracked — ${inSync} in sync, ${pendingLocal} pending (local changes), ${pendingNeverSynced} pending (never synced), ${missingLocally} missing locally\n`,
+  );
+}
+
+function tryLsTreeBlobSha(
+  gitDir: string,
+  refName: string,
+  relPath: string,
+): string | undefined {
+  let out: string;
+  try {
+    out = execFileSync("git", [gitDir, "ls-tree", refName, "--", relPath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+  if (out.length === 0) {
+    return undefined;
+  }
+  const match = out.match(/^\d+ \w+ ([0-9a-f]+)\t/);
+  return match ? match[1] : undefined;
+}
+
+function tryHashObject(gitDir: string, filePath: string): string | undefined {
+  try {
+    return execFileSync("git", [gitDir, "hash-object", filePath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
 }
 
 function tryGetLastPushTimestamp(gitDir: string, refName: string): string | undefined {

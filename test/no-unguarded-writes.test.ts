@@ -45,11 +45,6 @@ const ALLOWLIST: Array<{ file: string; snippet: string; reason: string }> = [
     snippet: "fs.rmSync(shadowRepoPath",
     reason: "removes the entire shadow repo state directory on uninstall, not a per-file manifest path",
   },
-  {
-    file: "sibling/init.ts",
-    snippet: "fs.writeFileSync(configPath",
-    reason: "writes the tool's own local sync-config file, not a manifest path",
-  },
 ];
 
 function listTsFiles(dir: string): string[] {

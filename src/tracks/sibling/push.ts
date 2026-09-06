@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { readManifest, defaultManifestPath } from "../../manifest";
+import { readManifest, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { safeCopyFile, safeRemove } from "../../safe-write";
 import { siblingConfigPath, type SiblingConfig } from "./init";
@@ -135,7 +135,25 @@ export function run(_args: string[]): void {
 
   copyManifestFiles(repoRoot, clonePath, manifestPaths);
 
-  const stageablePaths = stageableManifestPaths(clonePath, manifestPaths);
+  // Unconditionally copy the manifest's own current content into the clone
+  // too (alongside the manifest-listed files), so it gets committed/pushed —
+  // a second machine's `pull` then gets the scope list back, not just file
+  // content.
+  const manifestSrc = defaultManifestPath(repoRoot);
+  if (fs.existsSync(manifestSrc)) {
+    if (fs.lstatSync(manifestSrc).isSymbolicLink()) {
+      process.stderr.write(
+        `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+      );
+    } else {
+      safeCopyFile(clonePath, manifestSrc, path.join(clonePath, MANIFEST_FILENAME));
+    }
+  }
+
+  const stageablePaths = stageableManifestPaths(clonePath, [
+    ...manifestPaths,
+    MANIFEST_FILENAME,
+  ]);
   if (stageablePaths.length > 0) {
     execFileSync("git", ["add", "--", ...stageablePaths], {
       cwd: clonePath,

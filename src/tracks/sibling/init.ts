@@ -3,30 +3,26 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
+import {
+  syncConfigPath,
+  writeDefaultTrack,
+  writeSyncConfig,
+  type SiblingSyncConfig,
+} from "../../sync-config";
 
-export interface SiblingConfig {
-  clonePath: string;
-  remote: string;
-}
+export type SiblingConfig = SiblingSyncConfig;
 
-interface SyncConfig {
-  sibling?: SiblingConfig;
-  [key: string]: unknown;
-}
-
-const CONFIG_DIR = ".omc";
-const CONFIG_FILE = ".sync-config.json";
 const EXCLUDE_ENTRY = ".omc/";
 
 /**
  * Path to the local (untracked) tool-config file that persists sibling-track
  * settings (clone path, remote) so `push`/`pull` don't need `--clone-path`
- * re-passed on every invocation. This file is intentionally never added to
- * the sync manifest — it's tool config, not synced content.
+ * re-passed on every invocation. Re-exported from the shared
+ * `../../sync-config` module (both tracks now share the same
+ * `.omc/.sync-config.json` file) so existing imports of `siblingConfigPath`
+ * from this module keep working unchanged.
  */
-export function siblingConfigPath(repoRoot: string = resolveRepoRoot()): string {
-  return path.join(repoRoot, CONFIG_DIR, CONFIG_FILE);
-}
+export const siblingConfigPath = syncConfigPath;
 
 /**
  * Resolves the anchor repo's `info/exclude` path via `git rev-parse
@@ -87,16 +83,9 @@ function persistConfig(
   remote: string,
   clonePath: string,
 ): void {
-  const configPath = siblingConfigPath(repoRoot);
-  let config: SyncConfig = {};
-  if (fs.existsSync(configPath)) {
-    config = JSON.parse(fs.readFileSync(configPath, "utf8")) as SyncConfig;
-  }
-
-  config.sibling = { clonePath: path.resolve(clonePath), remote };
-
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  writeSyncConfig(repoRoot, {
+    sibling: { clonePath: path.resolve(clonePath), remote },
+  });
 }
 
 export function run(args: string[]): void {
@@ -115,4 +104,5 @@ export function run(args: string[]): void {
   ensureOmcExcluded(repoRoot);
   ensureClone(remote, clonePath);
   persistConfig(repoRoot, remote, clonePath);
+  writeDefaultTrack(repoRoot, "sibling");
 }

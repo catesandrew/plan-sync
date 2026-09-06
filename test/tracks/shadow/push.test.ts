@@ -117,7 +117,9 @@ describe("push --track shadow (integration)", () => {
       .filter(Boolean)
       .sort();
 
-    expect(tree).toEqual(["clean1.md", "clean2.md"]);
+    // The manifest itself now travels as part of the payload (Feature:
+    // manifest auto-included in sync), alongside the surviving files.
+    expect(tree).toEqual([".sync-manifest", "clean1.md", "clean2.md"]);
 
     const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
     expect(warnings).toContain("secret.md");
@@ -171,7 +173,7 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(firstTree).toEqual(["notes.md"]);
+    expect(firstTree).toEqual([".sync-manifest", "notes.md"]);
 
     // Edit the clean, already-synced file so it now trips the advisory
     // SSN-shape scan.
@@ -188,7 +190,7 @@ describe("push --track shadow (integration)", () => {
       .sort();
     // Still present — a scan match must never cause the path to disappear
     // from the tree.
-    expect(secondTree).toEqual(["notes.md"]);
+    expect(secondTree).toEqual([".sync-manifest", "notes.md"]);
 
     const content = gitDirArgs(shadowRepoPath, ["show", `${refName}:notes.md`]);
     expect(content).toBe("clean planning notes");
@@ -215,7 +217,7 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(tree).toEqual(["keep.md"]);
+    expect(tree).toEqual([".sync-manifest", "keep.md"]);
   });
 
   it("N1: deleting EVERY manifest-listed file and pushing genuinely commits the (now-different) tree, and restore does not resurrect them", () => {
@@ -230,7 +232,7 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(firstTree).toEqual(["one.md", "two.md"]);
+    expect(firstTree).toEqual([".sync-manifest", "one.md", "two.md"]);
     const firstTreeSha = gitDirArgs(shadowRepoPath, ["rev-parse", `${refName}^{tree}`]);
 
     // Delete BOTH manifest-listed files locally, manifest left unchanged —
@@ -251,7 +253,10 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(secondTree).toEqual([]);
+    // The manifest itself persists (it was never deleted, only its listed
+    // content files were) — the tree is now empty of content files but still
+    // contains the manifest.
+    expect(secondTree).toEqual([".sync-manifest"]);
     const secondTreeSha = gitDirArgs(shadowRepoPath, ["rev-parse", `${refName}^{tree}`]);
     expect(secondTreeSha).not.toBe(firstTreeSha);
 
@@ -343,7 +348,7 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(treeBefore).toEqual(["a.md"]);
+    expect(treeBefore).toEqual([".sync-manifest", "a.md"]);
 
     // Delete the manifest FILE ENTIRELY (not merely emptying its contents)
     // while a real previous tip already exists on the ref.
@@ -356,7 +361,7 @@ describe("push --track shadow (integration)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
-    expect(treeAfter).toEqual(["a.md"]);
+    expect(treeAfter).toEqual([".sync-manifest", "a.md"]);
 
     // A subsequent restore elsewhere (fresh clone) must still have the
     // previously-synced file intact — not deleted.
@@ -394,6 +399,6 @@ describe("push --track shadow (integration)", () => {
       .filter(Boolean)
       .sort();
 
-    expect(tree).toEqual(["clean.md"]);
+    expect(tree).toEqual([".sync-manifest", "clean.md"]);
   });
 });
