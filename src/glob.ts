@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+
 const GLOB_META = /[*?[]/;
 
 /** Returns true if `pattern` contains any glob metacharacter (`*`, `?`, `[`). */
@@ -70,4 +73,60 @@ export function globToRegExp(pattern: string): RegExp {
 
 function escapeRegExpChar(c: string): string {
   return /[.+^${}()|\\]/.test(c) ? `\\${c}` : c;
+}
+
+/**
+ * Expands `pattern` against every regular file's path (relative to `root`)
+ * found by walking the filesystem starting at `root`. Returns the sorted
+ * list of matching relative paths.
+ *
+ * Shared symlink-safe expansion logic used by both `allow` (one-time glob
+ * expansion into literal manifest entries) and `resolveManifestPaths` in
+ * `src/manifest.ts` (live-rule expansion performed at push/status time) —
+ * previously duplicated as a private `walkFiles` inside `src/commands/allow.ts`.
+ */
+export function expandGlobUnderRoot(root: string, pattern: string): string[] {
+  const allFiles: string[] = [];
+  walkFiles(root, "", allFiles);
+
+  const regex = globToRegExp(pattern);
+  return allFiles.filter((relPath) => regex.test(relPath)).sort();
+}
+
+/**
+ * Recursively collects every regular file's path (relative to `root`) under
+ * `root`/`relDir`. Confines the walk to real, non-symlinked directories:
+ * every entry is `lstat`-ed before being recursed into or collected, so a
+ * symlinked directory component is never descended into, and a symlinked
+ * file is never collected.
+ */
+function walkFiles(root: string, relDir: string, out: string[]): void {
+  const dirPath = path.join(root, relDir);
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const entryRel = relDir ? `${relDir}/${entry.name}` : entry.name;
+    const entryFull = path.join(root, entryRel);
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(entryFull);
+    } catch {
+      continue;
+    }
+
+    if (stat.isSymbolicLink()) {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      walkFiles(root, entryRel, out);
+    } else if (stat.isFile()) {
+      out.push(entryRel);
+    }
+  }
 }

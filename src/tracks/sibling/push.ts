@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { readManifest, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
+import { resolveManifestSyncCandidates, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { safeCopyFile, safeRemove } from "../../safe-write";
 import { siblingConfigPath, type SiblingConfig } from "./init";
@@ -131,7 +131,12 @@ function hasStagedChanges(cwd: string): boolean {
 export function run(_args: string[]): void {
   const repoRoot = resolveRepoRoot();
   const { clonePath } = readSiblingConfig(repoRoot);
-  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+  // Resolved (live pattern re-evaluation against the current filesystem,
+  // plus every literal entry even when currently absent — see
+  // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
+  // lines — this is "what should be staged/considered-for-deletion right
+  // now".
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
 
   copyManifestFiles(repoRoot, clonePath, manifestPaths);
 

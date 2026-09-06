@@ -112,6 +112,17 @@ no-op, not an error.
 not the filesystem — so you can remove an entry even if its file was already
 deleted from disk.
 
+**Every manifest entry is always a live pattern, re-evaluated at every
+`push`/`status`** — there's no separate "expand once" mode and no flag to
+opt into live matching. `omc-sync allow "plans/*.md"` saves that pattern
+string verbatim as one manifest line; a literal filename like `notes.md` is
+just a degenerate pattern with no wildcards, so it behaves identically to
+today either way. This means a file created *after* you ran `allow` still
+gets picked up automatically the next time you `push` or `status`, as long
+as it matches a pattern already in the manifest — the same way npm's
+`package.json` `files` field stays a live glob rather than a frozen
+snapshot, rather than requiring you to re-run `allow` for every new file.
+
 ### Editing the manifest by hand
 
 `.omc/.sync-manifest` is a plain text file, one path per line; blank lines

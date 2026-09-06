@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveRepoRoot } from "./repo-root";
+import { expandGlobUnderRoot, hasGlobMeta } from "./glob";
 
 /**
  * Manifest file format: one path per line. Blank lines and lines starting
@@ -137,6 +138,79 @@ export function addToManifest(manifestPath: string, entryPath: string): void {
     manifestPath,
     `${needsLeadingNewline ? "\n" : ""}${entryPath}\n`,
   );
+}
+
+/**
+ * Reads the manifest at `manifestPath` (via `readManifest`) and resolves
+ * every entry to concrete, currently-on-disk paths: EVERY entry is always
+ * treated as a glob pattern and re-evaluated live against the current
+ * filesystem under `.omc/`, via `expandGlobUnderRoot` — there is no
+ * literal-vs-pattern branch here. A literal filename like `notes.md` is
+ * just a degenerate pattern with no metacharacters, so `expandGlobUnderRoot`
+ * naturally resolves it to itself (if it currently exists on disk, as a
+ * regular file) or to nothing (if it doesn't exist, or is a symlink), via
+ * the exact same walk+match logic used for every other entry — no
+ * special-casing needed. Returns the deduplicated, combined list.
+ *
+ * This is deliberately a SEPARATE function from `readManifest`, not a
+ * replacement for it: `readManifest`'s contract (raw entries verbatim,
+ * never glob-expanded) must not change, since several call sites
+ * legitimately need the raw list rather than "what should be synced right
+ * now" — e.g. `unallow`'s glob-matching against current manifest entries,
+ * `addToManifest`'s own duplicate-check, and the manifest-travel merge
+ * logic in shadow/restore.ts and sibling/pull.ts that unions incoming
+ * manifest lines into the local one.
+ *
+ * Note that push/status do NOT call this directly — see
+ * `resolveManifestSyncCandidates` below for the list they actually
+ * consume, which additionally preserves a literal entry even when it
+ * doesn't currently resolve to anything (needed for deletion propagation,
+ * "missing locally" reporting, and symlink-skip warnings).
+ */
+export function resolveManifestPaths(manifestPath: string): string[] {
+  const entries = readManifest(manifestPath);
+  const omcRoot = path.dirname(manifestPath);
+  const resolved = new Set<string>();
+
+  for (const entry of entries) {
+    for (const match of expandGlobUnderRoot(omcRoot, entry)) {
+      resolved.add(match);
+    }
+  }
+
+  return [...resolved];
+}
+
+/**
+ * The candidate path list actually consumed by both tracks' `push` and
+ * `status`: the union of `resolveManifestPaths` (every entry's CURRENT
+ * filesystem matches, live) with every literal (non-glob) manifest entry,
+ * included even when it doesn't currently resolve to anything on disk.
+ *
+ * That extra inclusion is what push/status need beyond `resolveManifestPaths`
+ * alone: a literal entry like `notes.md` always refers to exactly one
+ * specific path, whether or not a file is currently there — and push's
+ * deletion-propagation, status's "missing locally" reporting, and both
+ * tracks' symlink-skip warnings all depend on that path surviving into the
+ * candidate list even when it's absent or a symlink (both of which
+ * `expandGlobUnderRoot`, underlying `resolveManifestPaths`, otherwise
+ * silently omits, since it only ever collects currently-existing regular
+ * files). A glob PATTERN entry (e.g. `plans/*.md`) has no single path of its
+ * own to fall back to this way — if it currently matches nothing, it
+ * contributes nothing, which is correct: there's no specific file a pattern
+ * "used to mean" that a deletion or missing-locally check could act on.
+ */
+export function resolveManifestSyncCandidates(manifestPath: string): string[] {
+  const entries = readManifest(manifestPath);
+  const candidates = new Set(resolveManifestPaths(manifestPath));
+
+  for (const entry of entries) {
+    if (!hasGlobMeta(entry)) {
+      candidates.add(entry);
+    }
+  }
+
+  return [...candidates];
 }
 
 /**

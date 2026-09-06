@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { defaultManifestPath, readManifest } from "../../manifest";
+import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { siblingConfigPath, type SiblingConfig } from "./init";
 
@@ -46,7 +46,11 @@ function sha256(content: Buffer): string {
 export function run(_args: string[]): void {
   const repoRoot = resolveRepoRoot();
   const { clonePath } = readSiblingConfig(repoRoot);
-  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+  // Resolved (live pattern re-evaluation against the current filesystem,
+  // plus every literal entry even when currently absent — see
+  // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
+  // lines — this is "what should be reported right now".
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
 
   let inSync = 0;
   let pendingLocal = 0;

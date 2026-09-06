@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFlag } from "../../args";
-import { defaultManifestPath, readManifest } from "../../manifest";
+import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 
@@ -99,7 +99,11 @@ function tryFetchRef(gitDir: string, refName: string): void {
  * Prints one line per path, then a one-line summary count.
  */
 function printPerFileStatus(repoRoot: string, gitDir: string, refName: string): void {
-  const manifestPaths = readManifest(defaultManifestPath(repoRoot));
+  // Resolved (live pattern re-evaluation against the current filesystem,
+  // plus every literal entry even when currently absent — see
+  // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
+  // lines — this is "what should be reported right now".
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
 
   let inSync = 0;
   let pendingLocal = 0;

@@ -6,7 +6,7 @@ import {
   defaultManifestPath,
   manifestExists,
   MANIFEST_FILENAME,
-  readManifest,
+  resolveManifestSyncCandidates,
 } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
@@ -67,7 +67,12 @@ export function run(_args: string[]): void {
     );
   }
 
-  const manifestPaths = readManifest(manifestPath);
+  // Resolved (live pattern re-evaluation against the current filesystem,
+  // plus every literal entry even when currently absent — see
+  // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
+  // lines — this is "what should be staged/considered-for-deletion right
+  // now".
+  const manifestPaths = resolveManifestSyncCandidates(manifestPath);
 
   const indexFile = path.join(
     fs.mkdtempSync(path.join(os.tmpdir(), "omc-sync-shadow-index-")),

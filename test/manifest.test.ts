@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { addToManifest, readManifest } from "../src/manifest";
+import { addToManifest, readManifest, resolveManifestPaths } from "../src/manifest";
 
 describe("manifest", () => {
   let tmpDir: string;
@@ -108,5 +108,60 @@ describe("manifest", () => {
     expect(warnings).toContain("/etc/shadow");
 
     stderrSpy.mockRestore();
+  });
+
+  describe("resolveManifestPaths: every entry is always re-evaluated as a glob pattern, live", () => {
+    function writeUnderOmcRoot(relPath: string, content = "content\n"): void {
+      const filePath = path.join(path.dirname(manifestPath), relPath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content);
+    }
+
+    it("a literal entry (a degenerate pattern with no metacharacters) resolves to itself when the file exists", () => {
+      writeUnderOmcRoot("notes.md");
+      addToManifest(manifestPath, "notes.md");
+
+      expect(resolveManifestPaths(manifestPath)).toEqual(["notes.md"]);
+    });
+
+    it("a literal entry resolves to nothing when the file doesn't (yet) exist", () => {
+      addToManifest(manifestPath, "notes.md");
+
+      expect(resolveManifestPaths(manifestPath)).toEqual([]);
+    });
+
+    it("a pattern entry expands to every currently-matching file, with no literal/pattern branch needed", () => {
+      writeUnderOmcRoot("plans/a.md");
+      writeUnderOmcRoot("plans/b.md");
+      writeUnderOmcRoot("plans/skip.txt");
+      addToManifest(manifestPath, "plans/*.md");
+
+      expect(resolveManifestPaths(manifestPath).sort()).toEqual([
+        "plans/a.md",
+        "plans/b.md",
+      ]);
+    });
+
+    it("a pattern entry picks up a file created AFTER it was added to the manifest, on the next call — no re-running allow", () => {
+      addToManifest(manifestPath, "plans/*.md");
+      expect(resolveManifestPaths(manifestPath)).toEqual([]);
+
+      writeUnderOmcRoot("plans/late.md");
+
+      expect(resolveManifestPaths(manifestPath)).toEqual(["plans/late.md"]);
+    });
+
+    it("combines a mix of literal and pattern entries, deduplicated", () => {
+      writeUnderOmcRoot("notes.md");
+      writeUnderOmcRoot("plans/a.md");
+      addToManifest(manifestPath, "notes.md");
+      addToManifest(manifestPath, "plans/*.md");
+      addToManifest(manifestPath, "plans/a.md"); // overlaps with the pattern's match
+
+      expect(resolveManifestPaths(manifestPath).sort()).toEqual([
+        "notes.md",
+        "plans/a.md",
+      ]);
+    });
   });
 });

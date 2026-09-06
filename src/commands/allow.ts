@@ -1,24 +1,26 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
-import { addToManifest, defaultManifestPath, readManifest } from "../manifest";
-import { hasGlobMeta, globToRegExp } from "../glob";
+import { addToManifest, defaultManifestPath } from "../manifest";
+import { expandGlobUnderRoot } from "../glob";
 
 /**
  * `omc-sync allow <path-or-glob> [<path-or-glob> ...]`
  *
- * Accepts one or more targets in a single call. Each is processed
- * independently, in order:
+ * Accepts one or more targets in a single call. Every target is added to
+ * the manifest exactly once, VERBATIM, as a single manifest line, via
+ * `addToManifest` — regardless of whether it contains glob metacharacters
+ * (`*`, `?`, `[`). There is no glob-expansion-into-N-literal-matches step
+ * here, and no literal-vs-pattern branch: every manifest entry is always
+ * re-evaluated as a glob pattern later, at push/status time (see
+ * `resolveManifestPaths` in `src/manifest.ts`). A literal filename like
+ * `notes.md` is just a degenerate pattern with no metacharacters — it
+ * already only matches itself, so nothing special is needed for it here.
  *
- * A literal target (no glob metacharacters) is added to the manifest
- * exactly as before — unchanged, backward-compatible behavior.
- *
- * A pattern containing `*`, `?`, or `[` is instead expanded by walking the
- * filesystem under `.omc/` (the manifest's own root) and matching relative
- * paths against the pattern, then calling the existing `addToManifest` for
- * each match. The walk never descends through a symlinked directory
- * component, and only regular files (never directories or symlinks) are
- * ever matched — the same symlink-skip posture used everywhere else in this
- * tool.
+ * The current match count under `.omc/` is still reported for user
+ * feedback, purely informational — it is never written to the manifest —
+ * via `expandGlobUnderRoot` (the same symlink-safe walk used at push/status
+ * time). A pattern entry that currently matches zero files is still added:
+ * it may start matching later, since it's re-evaluated live on every
+ * push/status.
  */
 export function run(args: string[]): void {
   if (args.length === 0) {
@@ -33,78 +35,11 @@ export function run(args: string[]): void {
 }
 
 function processTarget(manifestPath: string, target: string): void {
-  if (!hasGlobMeta(target)) {
-    addToManifest(manifestPath, target);
-    return;
-  }
+  addToManifest(manifestPath, target);
 
   const omcRoot = path.dirname(manifestPath);
-  const allFiles: string[] = [];
-  walkFiles(omcRoot, "", allFiles);
-
-  const pattern = globToRegExp(target);
-  const matches = allFiles.filter((relPath) => pattern.test(relPath)).sort();
-
-  if (matches.length === 0) {
-    process.stderr.write(
-      `omc-sync: allow: pattern '${target}' matched no files under .omc/\n`,
-    );
-    return;
-  }
-
-  const existingBefore = new Set(readManifest(manifestPath));
-  let added = 0;
-  let alreadyPresent = 0;
-
-  for (const relPath of matches) {
-    if (existingBefore.has(relPath)) {
-      alreadyPresent++;
-    } else {
-      added++;
-    }
-    addToManifest(manifestPath, relPath);
-  }
-
+  const matchCount = expandGlobUnderRoot(omcRoot, target).length;
   process.stdout.write(
-    `omc-sync: allow: pattern '${target}' matched ${matches.length} file(s) — ${added} newly added, ${alreadyPresent} already present\n`,
+    `omc-sync: allow: '${target}' added (currently matches ${matchCount} file(s))\n`,
   );
-}
-
-/**
- * Recursively collects every regular file's path (relative to `root`) under
- * `root`/`relDir`. Confines the walk to real, non-symlinked directories:
- * every entry is `lstat`-ed before being recursed into or collected, so a
- * symlinked directory component is never descended into, and a symlinked
- * file is never collected — the same escape class already hardened against
- * elsewhere in this tool.
- */
-function walkFiles(root: string, relDir: string, out: string[]): void {
-  const dirPath = path.join(root, relDir);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    const entryRel = relDir ? `${relDir}/${entry.name}` : entry.name;
-    const entryFull = path.join(root, entryRel);
-
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(entryFull);
-    } catch {
-      continue;
-    }
-
-    if (stat.isSymbolicLink()) {
-      continue;
-    }
-    if (stat.isDirectory()) {
-      walkFiles(root, entryRel, out);
-    } else if (stat.isFile()) {
-      out.push(entryRel);
-    }
-  }
 }

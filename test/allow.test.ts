@@ -4,13 +4,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { run as allowRun } from "../src/commands/allow";
-import { defaultManifestPath, readManifest } from "../src/manifest";
+import { defaultManifestPath, readManifest, resolveManifestPaths } from "../src/manifest";
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
-describe("allow: glob expansion", () => {
+describe("allow: every target is saved verbatim as one manifest line", () => {
   let tmpRoot: string;
   let anchorDir: string;
   let originalCwd: string;
@@ -36,7 +36,7 @@ describe("allow: glob expansion", () => {
     fs.writeFileSync(filePath, content);
   }
 
-  it("a literal path with no glob metacharacters is added exactly as before", () => {
+  it("a literal target with no glob metacharacters is saved as a single manifest line", () => {
     writeOmcFile("notes.md");
 
     allowRun(["notes.md"]);
@@ -44,77 +44,41 @@ describe("allow: glob expansion", () => {
     expect(readManifest(defaultManifestPath())).toEqual(["notes.md"]);
   });
 
-  it("expands a glob pattern to match files at varying depth", () => {
+  it("a glob pattern target is saved VERBATIM as a single manifest line — never expanded into its matches", () => {
     writeOmcFile("plans/a.md");
-    writeOmcFile("plans/sub/b.md");
-    writeOmcFile("plans/sub/deep/c.md");
-    writeOmcFile("plans/skip.txt");
-    writeOmcFile("other.md");
+    writeOmcFile("plans/b.md");
+    writeOmcFile("plans/sub/c.md");
 
     allowRun(["plans/**/*.md"]);
 
+    // Exactly one raw line, the pattern string itself — not one line per
+    // matched file.
+    expect(readManifest(defaultManifestPath())).toEqual(["plans/**/*.md"]);
+  });
+
+  it("accepts multiple targets (literal and glob, mixed) in a single call, one manifest line per target", () => {
+    writeOmcFile("notes.md");
+    writeOmcFile("plans/a.md");
+
+    allowRun(["notes.md", "todo.md", "plans/*.md"]);
+
     expect(readManifest(defaultManifestPath()).sort()).toEqual([
-      "plans/a.md",
-      "plans/sub/b.md",
-      "plans/sub/deep/c.md",
+      "notes.md",
+      "plans/*.md",
+      "todo.md",
     ]);
   });
 
-  it("skips directories and symlinks when expanding a glob (only regular files match)", () => {
+  it("adding the same target twice is idempotent (no duplicate manifest line)", () => {
     writeOmcFile("plans/a.md");
-    // A directory whose name happens to match the pattern shape must never
-    // be treated as a file match.
-    fs.mkdirSync(path.join(anchorDir, ".omc", "plans", "b.md"), {
-      recursive: true,
-    });
-
-    const outsideTarget = path.join(tmpRoot, "outside.md");
-    fs.writeFileSync(outsideTarget, "should never be matched\n");
-    fs.symlinkSync(
-      outsideTarget,
-      path.join(anchorDir, ".omc", "plans", "linked.md"),
-    );
 
     allowRun(["plans/*.md"]);
+    allowRun(["plans/*.md"]);
 
-    expect(readManifest(defaultManifestPath())).toEqual(["plans/a.md"]);
+    expect(readManifest(defaultManifestPath())).toEqual(["plans/*.md"]);
   });
 
-  it("does not descend through a symlinked directory component", () => {
-    const outsideDir = path.join(tmpRoot, "outside-dir");
-    fs.mkdirSync(outsideDir, { recursive: true });
-    fs.writeFileSync(path.join(outsideDir, "secret.md"), "secret\n");
-
-    fs.mkdirSync(path.join(anchorDir, ".omc"), { recursive: true });
-    fs.symlinkSync(outsideDir, path.join(anchorDir, ".omc", "linked-dir"));
-    writeOmcFile("clean.md");
-
-    allowRun(["**/*.md"]);
-
-    expect(readManifest(defaultManifestPath())).toEqual(["clean.md"]);
-  });
-
-  it("warns (not throws) to stderr when a glob pattern matches no files, and adds nothing", () => {
-    writeOmcFile("notes.md");
-
-    const stderrSpy = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
-
-    expect(() => allowRun(["nonexistent/**/*.md"])).not.toThrow();
-
-    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
-    stderrSpy.mockRestore();
-
-    expect(warnings).toContain("matched no files");
-    expect(readManifest(defaultManifestPath())).toEqual([]);
-  });
-
-  it("prints a summary of newly-added vs already-present files for a multi-match glob", () => {
-    writeOmcFile("plans/a.md");
-    writeOmcFile("plans/b.md");
-    allowRun(["plans/a.md"]); // literal pre-seed: already present before the glob run
-
+  it("reports the current match count for a pattern target, without requiring any match to exist yet", () => {
     const stdoutSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation(() => true);
@@ -124,29 +88,37 @@ describe("allow: glob expansion", () => {
     const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
     stdoutSpy.mockRestore();
 
-    expect(output).toContain("2 file(s)");
-    expect(output).toContain("1 newly added");
-    expect(output).toContain("1 already present");
-
-    expect(readManifest(defaultManifestPath()).sort()).toEqual([
-      "plans/a.md",
-      "plans/b.md",
-    ]);
+    expect(output).toContain("'plans/*.md' added");
+    expect(output).toContain("0 file(s)");
+    // Still added even though nothing currently matches — it's re-evaluated
+    // live at the next push/status, so a later-created file is picked up
+    // without re-running `allow`.
+    expect(readManifest(defaultManifestPath())).toEqual(["plans/*.md"]);
   });
 
-  it("accepts multiple targets (literal and glob, mixed) in a single call", () => {
+  it("reports the current match count for a literal-looking target", () => {
     writeOmcFile("notes.md");
-    writeOmcFile("todo.md");
-    writeOmcFile("plans/a.md");
-    writeOmcFile("plans/b.md");
 
-    allowRun(["notes.md", "todo.md", "plans/*.md"]);
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
 
-    expect(readManifest(defaultManifestPath()).sort()).toEqual([
-      "notes.md",
-      "plans/a.md",
-      "plans/b.md",
-      "todo.md",
-    ]);
+    allowRun(["notes.md"]);
+
+    const output = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    stdoutSpy.mockRestore();
+
+    expect(output).toContain("'notes.md' added");
+    expect(output).toContain("1 file(s)");
+  });
+
+  it("a pattern picks up a file created AFTER the allow call, at the next resolution (no re-running allow)", () => {
+    allowRun(["plans/*.md"]);
+    expect(resolveManifestPaths(defaultManifestPath())).toEqual([]);
+
+    // File created after `allow` ran.
+    writeOmcFile("plans/late.md");
+
+    expect(resolveManifestPaths(defaultManifestPath())).toEqual(["plans/late.md"]);
   });
 });

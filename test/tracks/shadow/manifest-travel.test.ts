@@ -113,4 +113,29 @@ describe("shadow track: manifest travels with the sync payload", () => {
       fs.readFileSync(path.join(anchorRepo, ".omc", "local-only.md"), "utf8"),
     ).toBe("only known locally\n");
   });
+
+  it("a pattern manifest line travels verbatim — it is never expanded into its matches before being staged, pushed, or merged on restore", () => {
+    shadowInit([]);
+    writeManifest(["plans/*.md"]);
+    writeOmcFile("plans/a.md", "a\n");
+    writeOmcFile("plans/b.md", "b\n");
+    shadowPush([]);
+
+    switchToFreshMachine();
+    shadowRestore([]);
+
+    // The raw manifest entry is still the pattern string itself, not one
+    // line per matched file.
+    expect(readManifest(defaultManifestPath(anchorRepo))).toEqual(["plans/*.md"]);
+
+    // Restore materialized the files the pattern currently resolves to,
+    // even though only the pattern string (never the individual matches)
+    // ever traveled as a manifest line.
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "plans", "a.md"), "utf8")).toBe(
+      "a\n",
+    );
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "plans", "b.md"), "utf8")).toBe(
+      "b\n",
+    );
+  });
 });
