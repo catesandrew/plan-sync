@@ -68,17 +68,17 @@ describe("e2e: default track persistence (via CLI dispatch)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });

@@ -1,12 +1,14 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseFlag } from "../../args";
 import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import { siblingConfigPath, type SiblingConfig } from "./init";
 
 /**
- * `omc-sync status --track sibling`
+ * `plan-sync status --track sibling`
  *
  * Per-file sync report for the sibling track: for each manifest-listed
  * path, compares `.omc/<path>` (the anchor repo's copy) against
@@ -19,11 +21,11 @@ import { siblingConfigPath, type SiblingConfig } from "./init";
  *   - "missing locally": present in the clone, absent locally.
  */
 
-function readSiblingConfig(repoRoot: string): SiblingConfig {
-  const configPath = siblingConfigPath(repoRoot);
+function readSiblingConfig(repoRoot: string, rootDir: string): SiblingConfig {
+  const configPath = siblingConfigPath(repoRoot, rootDir);
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `status --track sibling: no sibling config found at ${configPath} — run \`omc-sync init --track sibling\` first`,
+      `status --track sibling: no sibling config found at ${configPath} — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -32,7 +34,7 @@ function readSiblingConfig(repoRoot: string): SiblingConfig {
   };
   if (!raw.sibling) {
     throw new Error(
-      `status --track sibling: ${configPath} has no "sibling" entry — run \`omc-sync init --track sibling\` first`,
+      `status --track sibling: ${configPath} has no "sibling" entry — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -43,14 +45,16 @@ function sha256(content: Buffer): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
 
-export function run(_args: string[]): void {
+export function run(args: string[]): void {
+  const { value: rootFlag } = parseFlag(args, "root");
   const repoRoot = resolveRepoRoot();
-  const { clonePath } = readSiblingConfig(repoRoot);
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
+  const { clonePath } = readSiblingConfig(repoRoot, rootDir);
   // Resolved (live pattern re-evaluation against the current filesystem,
   // plus every literal entry even when currently absent — see
   // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
   // lines — this is "what should be reported right now".
-  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot, rootDir));
 
   let inSync = 0;
   let pendingLocal = 0;
@@ -58,7 +62,7 @@ export function run(_args: string[]): void {
   let missingLocally = 0;
 
   for (const relPath of manifestPaths) {
-    const localPath = path.join(repoRoot, ".omc", relPath);
+    const localPath = path.join(repoRoot, rootDir, relPath);
     const clonedPath = path.join(clonePath, relPath);
     const localExists = fs.existsSync(localPath);
     const clonedExists = fs.existsSync(clonedPath);
@@ -87,10 +91,10 @@ export function run(_args: string[]): void {
       pendingNeverSynced++;
     }
 
-    process.stdout.write(`omc-sync: ${relPath}: ${state}\n`);
+    process.stdout.write(`plan-sync: ${relPath}: ${state}\n`);
   }
 
   process.stdout.write(
-    `omc-sync: ${manifestPaths.length} file(s) tracked — ${inSync} in sync, ${pendingLocal} pending (local changes), ${pendingNeverSynced} pending (never synced), ${missingLocally} missing locally\n`,
+    `plan-sync: ${manifestPaths.length} file(s) tracked — ${inSync} in sync, ${pendingLocal} pending (local changes), ${pendingNeverSynced} pending (never synced), ${missingLocally} missing locally\n`,
   );
 }

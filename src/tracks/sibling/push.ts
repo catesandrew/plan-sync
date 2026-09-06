@@ -1,16 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { parseFlag } from "../../args";
 import { resolveManifestSyncCandidates, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import { safeCopyFile, safeRemove } from "../../safe-write";
 import { siblingConfigPath, type SiblingConfig } from "./init";
 
-function readSiblingConfig(repoRoot: string): SiblingConfig {
-  const configPath = siblingConfigPath(repoRoot);
+function readSiblingConfig(repoRoot: string, rootDir: string): SiblingConfig {
+  const configPath = siblingConfigPath(repoRoot, rootDir);
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `push --track sibling: no sibling config found at ${configPath} — run \`omc-sync init --track sibling\` first`,
+      `push --track sibling: no sibling config found at ${configPath} — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -19,7 +21,7 @@ function readSiblingConfig(repoRoot: string): SiblingConfig {
   };
   if (!raw.sibling) {
     throw new Error(
-      `push --track sibling: ${configPath} has no "sibling" entry — run \`omc-sync init --track sibling\` first`,
+      `push --track sibling: ${configPath} has no "sibling" entry — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -28,16 +30,17 @@ function readSiblingConfig(repoRoot: string): SiblingConfig {
 
 function copyManifestFiles(
   repoRoot: string,
+  rootDir: string,
   clonePath: string,
   manifestPaths: string[],
 ): void {
   for (const relPath of manifestPaths) {
-    const src = path.join(repoRoot, ".omc", relPath);
+    const src = path.join(repoRoot, rootDir, relPath);
     const dest = path.join(clonePath, relPath);
 
     if (!fs.existsSync(src)) {
-      // Source was removed from `.omc/` (deletion propagation) — remove the
-      // clone's copy too, if present, so the subsequent `git add` below
+      // Source was removed from `<rootDir>/` (deletion propagation) — remove
+      // the clone's copy too, if present, so the subsequent `git add` below
       // stages the deletion via ordinary git semantics.
       safeRemove(clonePath, dest);
       continue;
@@ -45,7 +48,7 @@ function copyManifestFiles(
 
     if (fs.lstatSync(src).isSymbolicLink()) {
       process.stderr.write(
-        `omc-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
+        `plan-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
       );
       continue;
     }
@@ -109,10 +112,10 @@ function commitEnv(cwd: string): NodeJS.ProcessEnv {
 
   return {
     ...process.env,
-    GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "omc-sync",
-    GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "omc-sync@localhost",
-    GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "omc-sync",
-    GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "omc-sync@localhost",
+    GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "plan-sync",
+    GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "plan-sync@localhost",
+    GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "plan-sync",
+    GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "plan-sync@localhost",
   };
 }
 
@@ -128,27 +131,29 @@ function hasStagedChanges(cwd: string): boolean {
   }
 }
 
-export function run(_args: string[]): void {
+export function run(args: string[]): void {
+  const { value: rootFlag } = parseFlag(args, "root");
   const repoRoot = resolveRepoRoot();
-  const { clonePath } = readSiblingConfig(repoRoot);
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
+  const { clonePath } = readSiblingConfig(repoRoot, rootDir);
   // Resolved (live pattern re-evaluation against the current filesystem,
   // plus every literal entry even when currently absent — see
   // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
   // lines — this is "what should be staged/considered-for-deletion right
   // now".
-  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot, rootDir));
 
-  copyManifestFiles(repoRoot, clonePath, manifestPaths);
+  copyManifestFiles(repoRoot, rootDir, clonePath, manifestPaths);
 
   // Unconditionally copy the manifest's own current content into the clone
   // too (alongside the manifest-listed files), so it gets committed/pushed —
   // a second machine's `pull` then gets the scope list back, not just file
   // content.
-  const manifestSrc = defaultManifestPath(repoRoot);
+  const manifestSrc = defaultManifestPath(repoRoot, rootDir);
   if (fs.existsSync(manifestSrc)) {
     if (fs.lstatSync(manifestSrc).isSymbolicLink()) {
       process.stderr.write(
-        `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+        `plan-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
       );
     } else {
       safeCopyFile(clonePath, manifestSrc, path.join(clonePath, MANIFEST_FILENAME));
@@ -169,7 +174,7 @@ export function run(_args: string[]): void {
   if (hasStagedChanges(clonePath)) {
     execFileSync(
       "git",
-      ["commit", "-m", `omc-sync: sync ${manifestPaths.length} file(s)`],
+      ["commit", "-m", `plan-sync: sync ${manifestPaths.length} file(s)`],
       { cwd: clonePath, stdio: "pipe", env: commitEnv(clonePath) },
     );
   }

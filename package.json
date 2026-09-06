@@ -1,10 +1,10 @@
 {
-  "name": "omc-sync",
+  "name": "plan-sync",
   "version": "0.1.0",
   "description": "Durable .omc/.omx planning-artifact sync (sibling-repo and shadow-ref tracks)",
   "private": true,
   "bin": {
-    "omc-sync": "dist/cli.js"
+    "plan-sync": "dist/cli.js"
   },
   "main": "dist/cli.js",
   "files": [

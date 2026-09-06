@@ -1,9 +1,12 @@
 import * as path from "node:path";
+import { parseFlag } from "../args";
 import { addToManifest, defaultManifestPath } from "../manifest";
 import { expandGlobUnderRoot } from "../glob";
+import { resolveRepoRoot } from "../repo-root";
+import { resolveRootDir } from "../root";
 
 /**
- * `omc-sync allow <path-or-glob> [<path-or-glob> ...]`
+ * `plan-sync allow <path-or-glob> [<path-or-glob> ...] [--root <dir>]`
  *
  * Accepts one or more targets in a single call. Every target is added to
  * the manifest exactly once, VERBATIM, as a single manifest line, via
@@ -23,13 +26,16 @@ import { expandGlobUnderRoot } from "../glob";
  * push/status.
  */
 export function run(args: string[]): void {
-  if (args.length === 0) {
+  const { value: rootFlag, rest } = parseFlag(args, "root");
+  if (rest.length === 0) {
     throw new Error("allow: <path> argument is required");
   }
 
-  const manifestPath = defaultManifestPath();
+  const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
+  const manifestPath = defaultManifestPath(repoRoot, rootDir);
 
-  for (const target of args) {
+  for (const target of rest) {
     processTarget(manifestPath, target);
   }
 }
@@ -40,6 +46,6 @@ function processTarget(manifestPath: string, target: string): void {
   const omcRoot = path.dirname(manifestPath);
   const matchCount = expandGlobUnderRoot(omcRoot, target).length;
   process.stdout.write(
-    `omc-sync: allow: '${target}' added (currently matches ${matchCount} file(s))\n`,
+    `plan-sync: allow: '${target}' added (currently matches ${matchCount} file(s))\n`,
   );
 }

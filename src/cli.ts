@@ -24,7 +24,7 @@ export const COMMANDS: Record<string, Command> = {
   uninstall,
 };
 
-export const USAGE = `Usage: omc-sync <command> [options]
+export const USAGE = `Usage: plan-sync <command> [options]
 
 Commands:
   init       Initialize a sync track (sibling repo or shadow ref)
@@ -36,7 +36,7 @@ Commands:
   status     Report sync freshness/health
   uninstall  Remove sync configuration and state
 
-Run "omc-sync <command> --help" for command-specific options.
+Run "plan-sync <command> --help" for command-specific options.
 `;
 
 /**
@@ -61,7 +61,7 @@ export function dispatch(argv: string[]): number {
     return 0;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`omc-sync: ${message}\n`);
+    process.stderr.write(`plan-sync: ${message}\n`);
     return 1;
   }
 }

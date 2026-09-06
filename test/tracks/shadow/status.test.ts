@@ -38,17 +38,17 @@ describe("status --track shadow (integration)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -98,11 +98,11 @@ describe("status --track shadow (integration)", () => {
     shadowPush([]);
 
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
     const gitDir = `--git-dir=${shadowRepoPath}`;
-    const refName = `refs/omc/${projectId}/data`;
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
 
     // Rewrite the pushed commit's committer date to 2 days ago and move
     // both the local mirror ref and the "origin" ref to point at it.

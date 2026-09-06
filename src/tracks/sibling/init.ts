@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import {
   syncConfigPath,
   writeDefaultTrack,
@@ -11,8 +12,6 @@ import {
 } from "../../sync-config";
 
 export type SiblingConfig = SiblingSyncConfig;
-
-const EXCLUDE_ENTRY = ".omc/";
 
 /**
  * Path to the local (untracked) tool-config file that persists sibling-track
@@ -43,7 +42,8 @@ function resolveGitExcludePath(repoRoot: string): string {
   return path.isAbsolute(result) ? result : path.resolve(repoRoot, result);
 }
 
-function ensureOmcExcluded(repoRoot: string): void {
+function ensureOmcExcluded(repoRoot: string, rootDir: string): void {
+  const excludeEntry = `${rootDir}/`;
   const excludePath = resolveGitExcludePath(repoRoot);
   const existing = fs.existsSync(excludePath)
     ? fs.readFileSync(excludePath, "utf8")
@@ -51,14 +51,14 @@ function ensureOmcExcluded(repoRoot: string): void {
 
   const alreadyPresent = existing
     .split("\n")
-    .some((line) => line.trim() === EXCLUDE_ENTRY);
+    .some((line) => line.trim() === excludeEntry);
   if (alreadyPresent) return;
 
   fs.mkdirSync(path.dirname(excludePath), { recursive: true });
   const needsLeadingNewline = existing.length > 0 && !existing.endsWith("\n");
   fs.appendFileSync(
     excludePath,
-    `${needsLeadingNewline ? "\n" : ""}${EXCLUDE_ENTRY}\n`,
+    `${needsLeadingNewline ? "\n" : ""}${excludeEntry}\n`,
   );
 }
 
@@ -82,15 +82,19 @@ function persistConfig(
   repoRoot: string,
   remote: string,
   clonePath: string,
+  rootDir: string,
 ): void {
-  writeSyncConfig(repoRoot, {
-    sibling: { clonePath: path.resolve(clonePath), remote },
-  });
+  writeSyncConfig(
+    repoRoot,
+    { sibling: { clonePath: path.resolve(clonePath), remote } },
+    rootDir,
+  );
 }
 
 export function run(args: string[]): void {
   const { value: remote, rest: rest1 } = parseFlag(args, "remote");
-  const { value: clonePath } = parseFlag(rest1, "clone-path");
+  const { value: clonePath, rest: rest2 } = parseFlag(rest1, "clone-path");
+  const { value: rootFlag } = parseFlag(rest2, "root");
 
   if (!remote) {
     throw new Error("init --track sibling: --remote <url> is required");
@@ -100,9 +104,10 @@ export function run(args: string[]): void {
   }
 
   const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
 
-  ensureOmcExcluded(repoRoot);
+  ensureOmcExcluded(repoRoot, rootDir);
   ensureClone(remote, clonePath);
-  persistConfig(repoRoot, remote, clonePath);
-  writeDefaultTrack(repoRoot, "sibling");
+  persistConfig(repoRoot, remote, clonePath, rootDir);
+  writeDefaultTrack(repoRoot, "sibling", rootDir);
 }

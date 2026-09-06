@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Track } from "./args";
 import { resolveRepoRoot } from "./repo-root";
+import { DEFAULT_ROOT } from "./root";
 
 /**
  * Shared local (untracked) tool-config file at `.omc/.sync-config.json`,
@@ -13,7 +14,6 @@ import { resolveRepoRoot } from "./repo-root";
  * wholesale, so one track's settings never clobber the other's.
  */
 
-const CONFIG_DIR = ".omc";
 const CONFIG_FILE = ".sync-config.json";
 
 export interface SiblingSyncConfig {
@@ -33,8 +33,11 @@ export interface SyncConfig {
  * `resolveRepoRoot()`). This file is intentionally never added to the sync
  * manifest — it's tool config, not synced content.
  */
-export function syncConfigPath(repoRoot: string = resolveRepoRoot()): string {
-  return path.join(repoRoot, CONFIG_DIR, CONFIG_FILE);
+export function syncConfigPath(
+  repoRoot: string = resolveRepoRoot(),
+  rootDir: string = DEFAULT_ROOT,
+): string {
+  return path.join(repoRoot, rootDir, CONFIG_FILE);
 }
 
 /**
@@ -42,8 +45,11 @@ export function syncConfigPath(repoRoot: string = resolveRepoRoot()): string {
  * exist yet (rather than throwing) — every caller here treats a missing
  * config file as "nothing configured yet", not an error.
  */
-export function readSyncConfig(repoRoot: string = resolveRepoRoot()): SyncConfig {
-  const configPath = syncConfigPath(repoRoot);
+export function readSyncConfig(
+  repoRoot: string = resolveRepoRoot(),
+  rootDir: string = DEFAULT_ROOT,
+): SyncConfig {
+  const configPath = syncConfigPath(repoRoot, rootDir);
   if (!fs.existsSync(configPath)) {
     return {};
   }
@@ -56,8 +62,12 @@ export function readSyncConfig(repoRoot: string = resolveRepoRoot()): SyncConfig
  * entry written by a prior `init --track sibling`). Creates the file and its
  * parent directory if they don't exist yet.
  */
-export function writeSyncConfig(repoRoot: string, updates: Partial<SyncConfig>): void {
-  const configPath = syncConfigPath(repoRoot);
+export function writeSyncConfig(
+  repoRoot: string,
+  updates: Partial<SyncConfig>,
+  rootDir: string = DEFAULT_ROOT,
+): void {
+  const configPath = syncConfigPath(repoRoot, rootDir);
   let config: SyncConfig = {};
   if (fs.existsSync(configPath)) {
     config = JSON.parse(fs.readFileSync(configPath, "utf8")) as SyncConfig;
@@ -75,8 +85,12 @@ export function writeSyncConfig(repoRoot: string, updates: Partial<SyncConfig>):
  * `--track` flag. Always overwrites any previously persisted default — "most
  * recently initialized track wins" is the intended semantics.
  */
-export function writeDefaultTrack(repoRoot: string, track: Track): void {
-  writeSyncConfig(repoRoot, { defaultTrack: track });
+export function writeDefaultTrack(
+  repoRoot: string,
+  track: Track,
+  rootDir: string = DEFAULT_ROOT,
+): void {
+  writeSyncConfig(repoRoot, { defaultTrack: track }, rootDir);
 }
 
 /**
@@ -84,6 +98,9 @@ export function writeDefaultTrack(repoRoot: string, track: Track): void {
  * persisted yet (e.g. `init` was never run, or the config file predates this
  * feature).
  */
-export function getDefaultTrack(repoRoot: string = resolveRepoRoot()): Track | undefined {
-  return readSyncConfig(repoRoot).defaultTrack;
+export function getDefaultTrack(
+  repoRoot: string = resolveRepoRoot(),
+  rootDir: string = DEFAULT_ROOT,
+): Track | undefined {
+  return readSyncConfig(repoRoot, rootDir).defaultTrack;
 }

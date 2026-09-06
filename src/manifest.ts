@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveRepoRoot } from "./repo-root";
 import { expandGlobUnderRoot, hasGlobMeta } from "./glob";
+import { DEFAULT_ROOT } from "./root";
 
 /**
  * Manifest file format: one path per line. Blank lines and lines starting
@@ -11,7 +12,6 @@ import { expandGlobUnderRoot, hasGlobMeta } from "./glob";
  * which paths are opted in to sync.
  */
 
-const MANIFEST_DIR = ".omc";
 const MANIFEST_FILE = ".sync-manifest";
 
 /**
@@ -24,12 +24,18 @@ const MANIFEST_FILE = ".sync-manifest";
 export const MANIFEST_FILENAME = MANIFEST_FILE;
 
 /**
- * Returns the default manifest path (`.omc/.sync-manifest`) relative to the
- * given repo root, defaulting to the git repository top level containing
- * the current working directory (via `resolveRepoRoot()`).
+ * Returns the default manifest path (`<rootDir>/.sync-manifest`) relative to
+ * the given repo root, defaulting to the git repository top level containing
+ * the current working directory (via `resolveRepoRoot()`) and the default
+ * root directory (`.omc`) when `rootDir` isn't given explicitly — callers
+ * that need to honor an explicit `--root` flag must resolve it first (see
+ * `resolveRootDir` in `./root`) and pass it through here.
  */
-export function defaultManifestPath(repoRoot: string = resolveRepoRoot()): string {
-  return path.join(repoRoot, MANIFEST_DIR, MANIFEST_FILE);
+export function defaultManifestPath(
+  repoRoot: string = resolveRepoRoot(),
+  rootDir: string = DEFAULT_ROOT,
+): string {
+  return path.join(repoRoot, rootDir, MANIFEST_FILE);
 }
 
 /**
@@ -90,7 +96,7 @@ export function readManifest(manifestPath: string): string[] {
     .filter((line) => {
       if (!isPathContained(omcRoot, line)) {
         process.stderr.write(
-          `omc-sync: ignoring out-of-bounds manifest entry '${line}'\n`,
+          `plan-sync: ignoring out-of-bounds manifest entry '${line}'\n`,
         );
         return false;
       }

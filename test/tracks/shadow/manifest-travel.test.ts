@@ -44,17 +44,17 @@ describe("shadow track: manifest travels with the sync payload", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -76,7 +76,7 @@ describe("shadow track: manifest travels with the sync payload", () => {
 
   function switchToFreshMachine(): void {
     const freshStateDir = path.join(tmpDir, `state-dir-fresh-${crypto.randomUUID()}`);
-    process.env.OMC_STATE_DIR = freshStateDir;
+    process.env.PLAN_SYNC_STATE_DIR = freshStateDir;
     shadowInit([]);
   }
 

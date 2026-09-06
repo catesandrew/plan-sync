@@ -9,16 +9,18 @@ import {
   readManifest,
 } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import { safeRemove, safeWriteFile } from "../../safe-write";
-import { resolveProjectId, resolveShadowRepoPath } from "./paths";
+import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 
 /**
- * `omc-sync restore --track shadow [--ref <sha-or-ref>]`
+ * `plan-sync restore --track shadow [--ref <sha-or-ref>] [--root <dir>]`
  *
  * Implements Part B, Architecture step 6 of
  * .omc/plans/shadow-ref-git-sync-for-omc-artifacts.md (US-007 / AC-B2,
- * AC-B3): materializes the tree at `refs/omc/<project-id>/data` (or a
- * `--ref` override) back onto disk at `.omc/<path>` in the anchor repo.
+ * AC-B3): materializes the tree at `refs/plan-sync/<project-id>/<root>/data`
+ * (or a `--ref` override) back onto disk at `<rootDir>/<path>` in the anchor
+ * repo.
  *
  * This is a true tree-sync, not an additive overlay:
  *   - every path present in the target tree is (re)written from the
@@ -42,19 +44,21 @@ import { resolveProjectId, resolveShadowRepoPath } from "./paths";
  * touches files under `.omc/` that this tool has no knowledge of.
  */
 export function run(args: string[]): void {
-  const { value: refFlag } = parseFlag(args, "ref");
+  const { value: refFlag, rest: rest1 } = parseFlag(args, "ref");
+  const { value: rootFlag } = parseFlag(rest1, "root");
   const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
   const projectId = resolveProjectId(repoRoot);
-  const shadowRepoPath = resolveShadowRepoPath(projectId);
+  const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 
   if (!fs.existsSync(shadowRepoPath)) {
     throw new Error(
-      `restore --track shadow: no shadow repo found at ${shadowRepoPath} — run \`omc-sync init --track shadow\` first`,
+      `restore --track shadow: no shadow repo found at ${shadowRepoPath} — run \`plan-sync init --track shadow\` first`,
     );
   }
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
-  const refName = refFlag ?? `refs/omc/${projectId}/data`;
+  const refName = refFlag ?? resolveShadowRefName(projectId, rootDir);
 
   // On a fresh machine (a shadow repo that was just `init`-ed but never
   // pushed from), the local ref doesn't exist yet — only `origin` knows
@@ -69,7 +73,7 @@ export function run(args: string[]): void {
 
   const targetPaths = listTree(gitDir, refName);
   const targetSet = new Set(targetPaths);
-  const omcRoot = path.join(repoRoot, ".omc");
+  const omcRoot = path.join(repoRoot, rootDir);
 
   for (const relPath of targetPaths) {
     if (relPath === MANIFEST_FILENAME) {
@@ -79,11 +83,11 @@ export function run(args: string[]): void {
       continue;
     }
     const content = readBlob(gitDir, refName, relPath);
-    const destPath = path.join(repoRoot, ".omc", relPath);
+    const destPath = path.join(repoRoot, rootDir, relPath);
     safeWriteFile(omcRoot, destPath, content);
   }
 
-  const localManifestPath = defaultManifestPath(repoRoot);
+  const localManifestPath = defaultManifestPath(repoRoot, rootDir);
   const manifestPaths = readManifest(localManifestPath);
   for (const relPath of manifestPaths) {
     if (targetSet.has(relPath)) {
@@ -96,7 +100,7 @@ export function run(args: string[]): void {
       // intent, so any local copy is left untouched.
       continue;
     }
-    const destPath = path.join(repoRoot, ".omc", relPath);
+    const destPath = path.join(repoRoot, rootDir, relPath);
     safeRemove(omcRoot, destPath);
   }
 
@@ -133,7 +137,7 @@ function mergeIncomingManifest(
       // addToManifest fails closed on those. Skip just that one line with a
       // warning rather than aborting the whole restore.
       process.stderr.write(
-        `omc-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
+        `plan-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
       );
     }
   }

@@ -1,8 +1,11 @@
+import { parseFlag } from "../args";
 import { defaultManifestPath, readManifest, removeFromManifest } from "../manifest";
 import { hasGlobMeta, globToRegExp } from "../glob";
+import { resolveRepoRoot } from "../repo-root";
+import { resolveRootDir } from "../root";
 
 /**
- * `omc-sync unallow <path-or-glob> [<path-or-glob> ...]`
+ * `plan-sync unallow <path-or-glob> [<path-or-glob> ...] [--root <dir>]`
  *
  * Removes one or more entries from the manifest — the counterpart to
  * `allow`. Accepts multiple targets in a single call, each processed
@@ -17,13 +20,16 @@ import { hasGlobMeta, globToRegExp } from "../glob";
  * be able to remove it), and every matching entry is removed.
  */
 export function run(args: string[]): void {
-  if (args.length === 0) {
+  const { value: rootFlag, rest } = parseFlag(args, "root");
+  if (rest.length === 0) {
     throw new Error("unallow: <path> argument is required");
   }
 
-  const manifestPath = defaultManifestPath();
+  const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
+  const manifestPath = defaultManifestPath(repoRoot, rootDir);
 
-  for (const target of args) {
+  for (const target of rest) {
     processTarget(manifestPath, target);
   }
 }
@@ -33,7 +39,7 @@ function processTarget(manifestPath: string, target: string): void {
     const removed = removeFromManifest(manifestPath, target);
     if (!removed) {
       process.stderr.write(
-        `omc-sync: unallow: '${target}' was not in the manifest (no-op)\n`,
+        `plan-sync: unallow: '${target}' was not in the manifest (no-op)\n`,
       );
     }
     return;
@@ -44,7 +50,7 @@ function processTarget(manifestPath: string, target: string): void {
 
   if (matches.length === 0) {
     process.stderr.write(
-      `omc-sync: unallow: pattern '${target}' matched no manifest entries\n`,
+      `plan-sync: unallow: pattern '${target}' matched no manifest entries\n`,
     );
     return;
   }
@@ -54,6 +60,6 @@ function processTarget(manifestPath: string, target: string): void {
   }
 
   process.stdout.write(
-    `omc-sync: unallow: pattern '${target}' removed ${matches.length} manifest entr${matches.length === 1 ? "y" : "ies"}\n`,
+    `plan-sync: unallow: pattern '${target}' removed ${matches.length} manifest entr${matches.length === 1 ? "y" : "ies"}\n`,
   );
 }

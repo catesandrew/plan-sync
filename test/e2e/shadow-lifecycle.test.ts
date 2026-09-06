@@ -73,17 +73,17 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -105,22 +105,22 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
     expect(run(["push", "--track", "shadow"]).exitCode).toBe(0);
 
     const projectId = resolveProjectId(anchorRepo);
-    const originalShadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const originalShadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
     expect(fs.existsSync(originalShadowRepoPath)).toBe(true);
 
-    // --- Simulate a fresh machine: a brand new OMC_STATE_DIR, re-init
+    // --- Simulate a fresh machine: a brand new PLAN_SYNC_STATE_DIR, re-init
     // against the same remote (same anchor repo -> same origin -> same
     // project id), so the shadow repo is a fresh clone-equivalent rather
     // than the same on-disk repo that pushed. ---
     const freshStateDir = path.join(tmpDir, "state-dir-fresh");
-    process.env.OMC_STATE_DIR = freshStateDir;
+    process.env.PLAN_SYNC_STATE_DIR = freshStateDir;
 
     expect(run(["init", "--track", "shadow"]).exitCode).toBe(0);
 
-    const freshShadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: freshStateDir },
+    const freshShadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: freshStateDir },
     });
     expect(fs.existsSync(freshShadowRepoPath)).toBe(true);
     expect(freshShadowRepoPath).not.toBe(originalShadowRepoPath);
@@ -141,7 +141,7 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
 
     // --- Uninstall the shadow track (from the "fresh machine" state): local
     // shadow dir must be removed and the remote ref must no longer resolve. ---
-    const refName = `refs/omc/${projectId}/data`;
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
     expect(
       execFileSync("git", ["ls-remote", originRemote, refName], {
         encoding: "utf8",

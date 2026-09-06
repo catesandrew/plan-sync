@@ -72,17 +72,17 @@ describe("e2e: observability — broken push and status staleness (via CLI dispa
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -110,8 +110,8 @@ describe("e2e: observability — broken push and status staleness (via CLI dispa
     // fails, without touching the real remote (which still holds the good
     // baseline ref). ---
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
     const bogusRemote = path.join(tmpDir, "does-not-exist.git");
     execFileSync("git", [
@@ -131,7 +131,7 @@ describe("e2e: observability — broken push and status staleness (via CLI dispa
     expect(brokenPushResult.stderr).toContain("push --track shadow");
 
     // The real remote must be untouched by the failed push attempt.
-    const refName = `refs/omc/${projectId}/data`;
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
     const remoteRefStillGood = execFileSync(
       "git",
       ["ls-remote", originRemote, refName],

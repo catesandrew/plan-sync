@@ -33,7 +33,7 @@ function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
-describe("omc-sync CLI dispatch", () => {
+describe("plan-sync CLI dispatch", () => {
   // Every dispatch call below resolves repoRoot/default-track from
   // process.cwd() (see src/repo-root.ts / src/sync-config.ts). Running these
   // tests from this project's own real repo root would read this project's

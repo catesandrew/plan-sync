@@ -4,12 +4,13 @@ import * as path from "node:path";
 import { parseFlag } from "../../args";
 import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
-import { resolveProjectId, resolveShadowRepoPath } from "./paths";
+import { resolveRootDir } from "../../root";
+import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 
 const DEFAULT_STALE_AFTER = "24h";
 
 /**
- * `omc-sync status --track shadow [--stale-after <duration>]`
+ * `plan-sync status --track shadow [--stale-after <duration>] [--root <dir>]`
  *
  * Implements Part B, Architecture step 8 of
  * .omc/plans/shadow-ref-git-sync-for-omc-artifacts.md (US-007): reports
@@ -25,39 +26,41 @@ const DEFAULT_STALE_AFTER = "24h";
  * older than the threshold.
  */
 export function run(args: string[]): void {
-  const { value: staleAfterFlag } = parseFlag(args, "stale-after");
+  const { value: staleAfterFlag, rest: rest1 } = parseFlag(args, "stale-after");
+  const { value: rootFlag } = parseFlag(rest1, "root");
   const staleAfterSpec = staleAfterFlag ?? DEFAULT_STALE_AFTER;
   const staleAfterMs = parseDuration(staleAfterSpec);
 
   const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
   const projectId = resolveProjectId(repoRoot);
-  const shadowRepoPath = resolveShadowRepoPath(projectId);
+  const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 
   if (!fs.existsSync(shadowRepoPath)) {
     process.stdout.write(
-      `omc-sync: shadow repo not initialized (no repo at ${shadowRepoPath})\n`,
+      `plan-sync: shadow repo not initialized (no repo at ${shadowRepoPath})\n`,
     );
     throw new Error("STALE: shadow repo not initialized — no push has ever happened");
   }
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
-  const refName = `refs/omc/${projectId}/data`;
+  const refName = resolveShadowRefName(projectId, rootDir);
 
   tryFetchRef(gitDir, refName);
-  printPerFileStatus(repoRoot, gitDir, refName);
+  printPerFileStatus(repoRoot, rootDir, gitDir, refName);
 
   const lastPushIso = tryGetLastPushTimestamp(gitDir, refName);
 
-  process.stdout.write(`omc-sync: shadow repo initialized at ${shadowRepoPath}\n`);
+  process.stdout.write(`plan-sync: shadow repo initialized at ${shadowRepoPath}\n`);
 
   if (!lastPushIso) {
-    process.stdout.write("omc-sync: no push has ever happened\n");
+    process.stdout.write("plan-sync: no push has ever happened\n");
     throw new Error("STALE: no push has ever happened");
   }
 
   const ageMs = Date.now() - Date.parse(lastPushIso);
   const ageHuman = formatAge(ageMs);
-  process.stdout.write(`omc-sync: last push ${ageHuman} (${lastPushIso})\n`);
+  process.stdout.write(`plan-sync: last push ${ageHuman} (${lastPushIso})\n`);
 
   if (ageMs > staleAfterMs) {
     process.stdout.write(
@@ -98,12 +101,17 @@ function tryFetchRef(gitDir: string, refName: string): void {
  *   - "missing locally": present in the ref, absent locally.
  * Prints one line per path, then a one-line summary count.
  */
-function printPerFileStatus(repoRoot: string, gitDir: string, refName: string): void {
+function printPerFileStatus(
+  repoRoot: string,
+  rootDir: string,
+  gitDir: string,
+  refName: string,
+): void {
   // Resolved (live pattern re-evaluation against the current filesystem,
   // plus every literal entry even when currently absent — see
   // `resolveManifestSyncCandidates`'s doc comment), not the raw manifest
   // lines — this is "what should be reported right now".
-  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot));
+  const manifestPaths = resolveManifestSyncCandidates(defaultManifestPath(repoRoot, rootDir));
 
   let inSync = 0;
   let pendingLocal = 0;
@@ -111,7 +119,7 @@ function printPerFileStatus(repoRoot: string, gitDir: string, refName: string): 
   let missingLocally = 0;
 
   for (const relPath of manifestPaths) {
-    const localPath = path.join(repoRoot, ".omc", relPath);
+    const localPath = path.join(repoRoot, rootDir, relPath);
     const localExists = fs.existsSync(localPath);
     const refSha = tryLsTreeBlobSha(gitDir, refName, relPath);
 
@@ -138,11 +146,11 @@ function printPerFileStatus(repoRoot: string, gitDir: string, refName: string): 
       pendingNeverSynced++;
     }
 
-    process.stdout.write(`omc-sync: ${relPath}: ${state}\n`);
+    process.stdout.write(`plan-sync: ${relPath}: ${state}\n`);
   }
 
   process.stdout.write(
-    `omc-sync: ${manifestPaths.length} file(s) tracked — ${inSync} in sync, ${pendingLocal} pending (local changes), ${pendingNeverSynced} pending (never synced), ${missingLocally} missing locally\n`,
+    `plan-sync: ${manifestPaths.length} file(s) tracked — ${inSync} in sync, ${pendingLocal} pending (local changes), ${pendingNeverSynced} pending (never synced), ${missingLocally} missing locally\n`,
   );
 }
 

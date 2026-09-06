@@ -3,18 +3,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import { writeDefaultTrack } from "../../sync-config";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 
-const EXCLUDE_LINE = ".omc/";
-
 /**
- * `omc-sync init --track shadow [--remote <url>]`
+ * `plan-sync init --track shadow [--remote <url>] [--root <dir>]`
  *
  * Bootstraps the shadow-ref track (Part B, Architecture steps 0-2 of
  * .omc/plans/shadow-ref-git-sync-for-omc-artifacts.md):
- *   0. ensure `.omc/` is excluded via the anchor repo's `.git/info/exclude`
- *      (untracked, idempotent, shared bootstrap with Part A)
+ *   0. ensure `<rootDir>/` is excluded via the anchor repo's
+ *      `.git/info/exclude` (untracked, idempotent, shared bootstrap with
+ *      Part A)
  *   1. create the bare shadow git repo (if missing) and pin
  *      `core.autocrlf=false`, explicit `user.name`/`user.email`, and a
  *      `-text` attributes rule at `<shadowRepoPath>/info/attributes`
@@ -22,18 +22,20 @@ const EXCLUDE_LINE = ".omc/";
  *      anchor repo's own `origin`
  */
 export function run(args: string[]): void {
-  const { value: remoteFlag } = parseFlag(args, "remote");
+  const { value: remoteFlag, rest: rest1 } = parseFlag(args, "remote");
+  const { value: rootFlag } = parseFlag(rest1, "root");
   const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
 
-  ensureExcludeEntry(repoRoot);
+  ensureExcludeEntry(repoRoot, rootDir);
 
   const projectId = resolveProjectId(repoRoot);
-  const shadowRepoPath = resolveShadowRepoPath(projectId);
+  const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 
   ensureBareRepo(shadowRepoPath);
   configureShadowRepo(shadowRepoPath, repoRoot);
   wireOrigin(shadowRepoPath, repoRoot, remoteFlag);
-  writeDefaultTrack(repoRoot, "shadow");
+  writeDefaultTrack(repoRoot, "shadow", rootDir);
 }
 
 /**
@@ -55,7 +57,8 @@ function resolveGitExcludePath(repoRoot: string): string {
   return path.isAbsolute(result) ? result : path.resolve(repoRoot, result);
 }
 
-function ensureExcludeEntry(repoRoot: string): void {
+function ensureExcludeEntry(repoRoot: string, rootDir: string): void {
+  const excludeLine = `${rootDir}/`;
   const excludePath = resolveGitExcludePath(repoRoot);
   fs.mkdirSync(path.dirname(excludePath), { recursive: true });
 
@@ -63,14 +66,14 @@ function ensureExcludeEntry(repoRoot: string): void {
     ? fs.readFileSync(excludePath, "utf8")
     : "";
   const lines = existing.split("\n");
-  if (lines.includes(EXCLUDE_LINE)) {
+  if (lines.includes(excludeLine)) {
     return;
   }
 
   const needsLeadingNewline = existing.length > 0 && !existing.endsWith("\n");
   fs.appendFileSync(
     excludePath,
-    `${needsLeadingNewline ? "\n" : ""}${EXCLUDE_LINE}\n`,
+    `${needsLeadingNewline ? "\n" : ""}${excludeLine}\n`,
   );
 }
 
@@ -109,8 +112,8 @@ function configureShadowRepo(shadowRepoPath: string, repoRoot: string): void {
  * otherwise fail.
  */
 function resolveGitIdentity(repoRoot: string): { name: string; email: string } {
-  const name = tryGitConfig(repoRoot, "user.name") ?? "omc-sync";
-  const email = tryGitConfig(repoRoot, "user.email") ?? "omc-sync@localhost";
+  const name = tryGitConfig(repoRoot, "user.name") ?? "plan-sync";
+  const email = tryGitConfig(repoRoot, "user.email") ?? "plan-sync@localhost";
   return { name, email };
 }
 

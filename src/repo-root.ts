@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 
 /**
  * Resolves the git repository's top-level directory containing `cwd`, so
- * that any `omc-sync` command run from a subdirectory of the anchor repo
+ * that any `plan-sync` command run from a subdirectory of the anchor repo
  * resolves the exact same `.omc/` content root — and therefore the same
  * shadow-track project-id and ref — as running it from the repo root
  * itself.

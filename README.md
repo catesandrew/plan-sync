@@ -1,6 +1,6 @@
-# omc-sync
+# plan-sync
 
-`omc-sync` is a CLI for durably syncing the human-authored planning artifacts
+`plan-sync` is a CLI for durably syncing the human-authored planning artifacts
 in `.omc/` (and the planned `.omx/`) — plans, drafts, research notes,
 handoffs, and similar files — to a remote, without those files ever showing
 up in `git status`, `git diff`, or `git log` on your primary repository.
@@ -26,16 +26,16 @@ npm run build
 Then either invoke the built CLI directly:
 
 ```
-node /path/to/omc-sync/dist/cli.js <command> ...
+node /path/to/plan-sync/dist/cli.js <command> ...
 ```
 
-or put a plain `omc-sync` on your `PATH`:
+or put a plain `plan-sync` on your `PATH`:
 
 ```
 npm link
 ```
 
-Everything below assumes `omc-sync` is on your `PATH`; substitute the
+Everything below assumes `plan-sync` is on your `PATH`; substitute the
 `node .../dist/cli.js` form if you didn't `npm link`.
 
 ## Which track should you use?
@@ -50,7 +50,7 @@ policies, exactly like any other repo.
 **Use Part B (`--track shadow`) only as a narrower, single-developer,
 single-machine personal backup mechanism.** It reproduces the same
 reverse-engineered trick `bd dolt push` uses to sync `.beads/` — a hidden bare
-git repository pushing to a custom ref (`refs/omc/<project-id>/data`) outside
+git repository pushing to a custom ref (`refs/plan-sync/<project-id>/<root>/data`) outside
 `refs/heads/*`/`refs/tags/*`, invisible to `git status`/`git branch -a`/`git
 log --all`. It has no cross-machine conflict resolution and no `pull`; it
 supports only push-from-this-machine and restore-onto-this-machine. It is
@@ -60,17 +60,17 @@ use Part A instead.
 ### "It says it pushed, but I don't see a branch or anything on GitHub"
 
 That's expected, not a bug — it's the entire point of the shadow-ref track.
-It pushes to `refs/omc/<project-id>/data`, a ref outside `refs/heads/*` and
+It pushes to `refs/plan-sync/<project-id>/<root>/data`, a ref outside `refs/heads/*` and
 `refs/tags/*`. GitHub/GitLab/Azure DevOps UIs only ever list branches and
 tags, so this ref is invisible there by design, and a plain `git fetch`/`git
 clone` never retrieves it either (the default fetch refspec only matches
 `refs/heads/*`). To prove it's really there:
 
 ```
-git ls-remote origin "refs/omc/*"
+git ls-remote origin "refs/plan-sync/*"
 ```
 
-If a ref/sha shows up, the push worked. `omc-sync status` reporting a recent
+If a ref/sha shows up, the push worked. `plan-sync status` reporting a recent
 "last push" timestamp is the normal, reliable signal that it worked — you
 should not expect to see anything in the host's web UI.
 
@@ -81,9 +81,9 @@ The **first** `init` you run in a repo persists a default track to
 later command:
 
 ```
-omc-sync init --track shadow          # or --track sibling --remote ... --clone-path ...
-omc-sync push                          # no --track needed — uses the persisted default
-omc-sync status                        # same
+plan-sync init --track shadow          # or --track sibling --remote ... --clone-path ...
+plan-sync push                          # no --track needed — uses the persisted default
+plan-sync status                        # same
 ```
 
 An explicit `--track` on any command always overrides the persisted default
@@ -97,13 +97,13 @@ Both tracks share one manifest file, `.omc/.sync-manifest`, and two commands
 to manage it:
 
 ```
-omc-sync allow <path-or-glob> [<path-or-glob> ...]
-omc-sync unallow <path-or-glob> [<path-or-glob> ...]
+plan-sync allow <path-or-glob> [<path-or-glob> ...]
+plan-sync unallow <path-or-glob> [<path-or-glob> ...]
 ```
 
-`<path>`/`<pattern>` is relative to `.omc/` (e.g. `omc-sync allow
+`<path>`/`<pattern>` is relative to `.omc/` (e.g. `plan-sync allow
 plans/foo.md`, not `.omc/plans/foo.md`). Both commands accept multiple
-targets in one call (`omc-sync allow a.md b.md "plans/*.md"`), each processed
+targets in one call (`plan-sync allow a.md b.md "plans/*.md"`), each processed
 independently. Adding an already-present path is a no-op — the manifest
 never gets a duplicate entry. Removing a path that isn't present is also a
 no-op, not an error.
@@ -114,7 +114,7 @@ deleted from disk.
 
 **Every manifest entry is always a live pattern, re-evaluated at every
 `push`/`status`** — there's no separate "expand once" mode and no flag to
-opt into live matching. `omc-sync allow "plans/*.md"` saves that pattern
+opt into live matching. `plan-sync allow "plans/*.md"` saves that pattern
 string verbatim as one manifest line; a literal filename like `notes.md` is
 just a degenerate pattern with no wildcards, so it behaves identically to
 today either way. This means a file created *after* you ran `allow` still
@@ -141,24 +141,21 @@ routine notes to sensitive proprietary content). By keeping sync strictly
 opt-in per path, that judgment stays with the developer, exercised each time
 a new path is added.
 
-**Glob patterns are supported** as a convenience for expanding *now* against
-files that already exist — `allow` is not a standing "watch this pattern
-forever" rule, it's a one-time expansion that adds whatever currently
-matches:
+**Glob patterns are supported** — and, per the note above, are saved
+verbatim and re-evaluated live on every `push`/`status`, not expanded once:
 
 ```
-omc-sync allow "plans/**/*.md"     # every .md under .omc/plans/, any depth
-omc-sync allow "*.md"              # every top-level .omc/*.md
-omc-sync allow "reports/?.md"      # single-character wildcard
+plan-sync allow "plans/**/*.md"     # every .md under .omc/plans/, any depth, now and later
+plan-sync allow "*.md"              # every top-level .omc/*.md
+plan-sync allow "reports/?.md"      # single-character wildcard
 ```
 
 Quote glob patterns so your shell doesn't expand them first. Supported
 wildcards: `*` (anything except `/`), `?` (one character except `/`), `**`
 (anything including `/`, i.e. recursive), and `[...]` character classes.
-Directories and symlinks are never matched — only real files. A pattern that
-matches nothing prints a warning and does nothing (it's not an error); a
-pattern that matches N files reports how many were newly added versus
-already present.
+Directories and symlinks are never matched — only real files. `allow` still
+prints how many files currently match, purely for feedback — that count is
+never written to the manifest, only the pattern string itself is.
 
 **The manifest itself travels with the sync payload** in both tracks — you
 never need to `allow` `.sync-manifest` yourself. `push` always includes it,
@@ -170,11 +167,11 @@ without manually re-running `allow` for every file.
 ## Part A: sibling git repo
 
 ```
-omc-sync init --track sibling --remote <url> --clone-path <path>
-omc-sync allow <path-or-glob>
-omc-sync push
-omc-sync pull
-omc-sync status
+plan-sync init --track sibling --remote <url> --clone-path <path>
+plan-sync allow <path-or-glob>
+plan-sync push
+plan-sync pull
+plan-sync status
 ```
 
 - `init --track sibling` writes `.omc/` into the anchor repo's
@@ -195,10 +192,10 @@ omc-sync status
 ### First machine
 
 ```
-omc-sync init --track sibling --remote git@github.com:my-org/my-repo-omc-artifacts.git --clone-path ../my-repo-omc-artifacts
-omc-sync allow "plans/**/*.md"
-omc-sync allow notes.md
-omc-sync push
+plan-sync init --track sibling --remote git@github.com:my-org/my-repo-omc-artifacts.git --clone-path ../my-repo-omc-artifacts
+plan-sync allow "plans/**/*.md"
+plan-sync allow notes.md
+plan-sync push
 ```
 
 ### Second machine
@@ -206,9 +203,9 @@ omc-sync push
 ```
 git clone git@github.com:my-org/my-repo.git   # the ANCHOR repo, not the artifacts one
 cd my-repo
-omc-sync init --track sibling --remote git@github.com:my-org/my-repo-omc-artifacts.git --clone-path ../my-repo-omc-artifacts
-omc-sync pull
-omc-sync status
+plan-sync init --track sibling --remote git@github.com:my-org/my-repo-omc-artifacts.git --clone-path ../my-repo-omc-artifacts
+plan-sync pull
+plan-sync status
 ```
 
 `--clone-path` is still required on every machine (it's a local filesystem
@@ -226,12 +223,12 @@ or auto-resolved.
 ## Part B: shadow-ref
 
 ```
-omc-sync init --track shadow [--remote <url>]
-omc-sync allow <path-or-glob>
-omc-sync push
-omc-sync restore [--ref <sha>]
-omc-sync status [--stale-after <duration>]
-omc-sync uninstall
+plan-sync init --track shadow [--remote <url>]
+plan-sync allow <path-or-glob>
+plan-sync push
+plan-sync restore [--ref <sha>]
+plan-sync status [--stale-after <duration>]
+plan-sync uninstall
 ```
 
 - `init --track shadow` creates a bare shadow git repo (idempotent), excludes
@@ -243,7 +240,7 @@ omc-sync uninstall
   SSN, API-key shapes) per file and skips — with a logged warning, keeping
   the file's prior synced content rather than deleting it — any file that
   matches, commits the resulting tree, and pushes to
-  `refs/omc/<project-id>/data`. If nothing actually changed since the last
+  `refs/plan-sync/<project-id>/<root>/data`. If nothing actually changed since the last
   push, it's a genuine no-op (`"nothing changed since the last push"`) —
   that message means it worked and detected no delta, not that it failed.
 - `restore` materializes the tree at that ref (or a `--ref` override) back
@@ -260,10 +257,10 @@ omc-sync uninstall
 ### First machine
 
 ```
-omc-sync init --track shadow
-omc-sync allow "plans/**/*.md"
-omc-sync push
-omc-sync status
+plan-sync init --track shadow
+plan-sync allow "plans/**/*.md"
+plan-sync push
+plan-sync status
 ```
 
 ### Second machine
@@ -271,9 +268,9 @@ omc-sync status
 ```
 git clone git@github.com:my-org/my-repo.git
 cd my-repo
-omc-sync init --track shadow
-omc-sync restore
-omc-sync status
+plan-sync init --track shadow
+plan-sync restore
+plan-sync status
 ```
 
 `init --track shadow` is the same, idempotent command on every machine —
@@ -281,9 +278,9 @@ there's no separate "bootstrap" step. `restore` brings back both file
 content and the manifest itself.
 
 The shadow repo lives outside `.omc/`, at
-`$OMC_STATE_DIR/<project-id>/omc-shadow.git` when `OMC_STATE_DIR` is set,
-otherwise at `${XDG_CACHE_HOME:-$HOME/.cache}/omc-shadow/<project-id>.git`.
-Set `OMC_STATE_DIR` (or `XDG_CACHE_HOME`) to control where that data lives —
+`$PLAN_SYNC_STATE_DIR/<project-id>/<root>/plan-sync-shadow.git` when `PLAN_SYNC_STATE_DIR` is set,
+otherwise at `${XDG_CACHE_HOME:-$HOME/.cache}/plan-sync-shadow/<project-id>/<root>.git`.
+Set `PLAN_SYNC_STATE_DIR` (or `XDG_CACHE_HOME`) to control where that data lives —
 for example, to centralize shadow repos for multiple projects outside the
 default cache location.
 
@@ -296,20 +293,54 @@ reviewed and are comfortable syncing.
 
 | Command | Tracks | Key flags |
 |---|---|---|
-| `init` | both (always requires `--track`) | `--track sibling --remote <url> --clone-path <path>` &nbsp;/&nbsp; `--track shadow [--remote <url>]` |
-| `allow <path-or-glob> [...]` | both (shared manifest) | — |
-| `unallow <path-or-glob> [...]` | both (shared manifest) | — |
-| `push` | both | — |
-| `pull` | sibling only | — |
-| `restore` | shadow only | `[--ref <sha-or-ref>]` |
-| `status` | both | `--track shadow` accepts `[--stale-after <duration>]` |
-| `uninstall` | shadow only | — |
+| `init` | both (always requires `--track`) | `--track sibling --remote <url> --clone-path <path>` &nbsp;/&nbsp; `--track shadow [--remote <url>]` &nbsp;(both accept `[--root <dir>]`) |
+| `allow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
+| `unallow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
+| `push` | both | `[--root <dir>]` |
+| `pull` | sibling only | `[--root <dir>]` |
+| `restore` | shadow only | `[--ref <sha-or-ref>] [--root <dir>]` |
+| `status` | both | `--track shadow` accepts `[--stale-after <duration>]`; both accept `[--root <dir>]` |
+| `uninstall` | shadow only | `[--root <dir>]` |
 
 Every command except `init` accepts `--track sibling|shadow` explicitly, or
 falls back to whichever track was most recently `init`-ed in this repo (see
 "Global setup" above). Running `pull --track shadow` or `restore --track
 sibling` (etc.) errors with a message pointing you at the right command for
 that track, rather than doing nothing silently.
+
+## Configurable root directory: `--root <dir>`
+
+Every command in the table above accepts `--root <dir>`, which generalizes
+what used to be a hardcoded `.omc` directory into "one root per invocation" —
+the same repo can host multiple independent roots (e.g. `.omc`, `.omx`,
+`.adlc`), each with its own manifest, sync-config, and (for the shadow track)
+ref namespace / local shadow-repo path, but any single command always
+operates against exactly one of them. Tracking multiple roots
+simultaneously in one manifest is a separate, larger feature — out of scope
+here.
+
+Resolution, when `--root` isn't given:
+
+1. If exactly one of `.omc`, `.omx`, `.adlc` exists as a directory **and**
+   contains a `.sync-config.json` at its top level, that one is
+   auto-detected and used.
+2. Otherwise (nothing initialized yet, or more than one candidate matches),
+   falls back to `.omc` — this preserves today's default behavior for the
+   common case and for a totally fresh repo.
+
+```
+plan-sync init --track shadow --root .omx
+plan-sync allow "plans/**/*.md" --root .omx
+plan-sync push --root .omx           # --track omitted: falls back to the
+                                       # default persisted inside .omx/.sync-config.json
+```
+
+Two roots initialized in the same repo (e.g. both `.omc` and `.omx` on the
+shadow track) never collide: the shadow-track ref name and local shadow-repo
+path both bake in the (dot-stripped) root segment —
+`refs/plan-sync/<project-id>/omc/data` vs.
+`refs/plan-sync/<project-id>/omx/data` — so pushing to one never affects the
+other's tree.
 
 ## Sanity-checking that it's really invisible
 
@@ -318,17 +349,17 @@ unaffected on your primary repo:
 
 ```
 git status --short      # empty
-git branch -a            # no refs/omc/* entry, ever
-git log --all --oneline  # no omc-sync commits, ever
+git branch -a            # no refs/plan-sync/* entry, ever
+git log --all --oneline  # no plan-sync commits, ever
 ```
 
 To see the hidden data directly:
 
 ```
-git ls-remote origin "refs/omc/*"
+git ls-remote origin "refs/plan-sync/*"
 ```
 
-## Setup (for developing omc-sync itself)
+## Setup (for developing plan-sync itself)
 
 ```
 npm install

@@ -102,7 +102,7 @@ export function safeWriteFile(
 ): boolean {
   if (!isSafeDestination(root, destPath)) {
     process.stderr.write(
-      `omc-sync: refusing to write through symlink at ${destPath}\n`,
+      `plan-sync: refusing to write through symlink at ${destPath}\n`,
     );
     return false;
   }
@@ -124,7 +124,7 @@ export function safeCopyFile(
 ): boolean {
   if (!isSafeDestination(root, destPath)) {
     process.stderr.write(
-      `omc-sync: refusing to write through symlink at ${destPath}\n`,
+      `plan-sync: refusing to write through symlink at ${destPath}\n`,
     );
     return false;
   }
@@ -164,7 +164,7 @@ export function safeRemove(root: string, destPath: string): boolean {
   // no-op that case instead, asymmetric with `safeWriteFile`/`safeCopyFile`.
   if (!isSafeDestination(root, destPath)) {
     process.stderr.write(
-      `omc-sync: refusing to remove through symlink at ${destPath}\n`,
+      `plan-sync: refusing to remove through symlink at ${destPath}\n`,
     );
     return false;
   }

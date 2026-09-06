@@ -9,7 +9,7 @@ import { dispatch } from "../../src/cli";
  * US-008 (AC-1): exercises the full Part A (sibling track) lifecycle through
  * the real CLI dispatcher (`dispatch()` from src/cli.ts) rather than calling
  * the individual track modules directly, to catch wiring gaps between
- * `omc-sync <command> --track sibling ...` and the underlying track modules
+ * `plan-sync <command> --track sibling ...` and the underlying track modules
  * that per-story unit/integration tests (test/tracks-sibling*.test.ts) don't
  * exercise.
  */

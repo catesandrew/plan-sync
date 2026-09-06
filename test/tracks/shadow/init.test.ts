@@ -36,17 +36,17 @@ describe("init --track shadow (integration)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -55,12 +55,12 @@ describe("init --track shadow (integration)", () => {
     shadowInit([]);
 
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
 
     expect(shadowRepoPath).toBe(
-      path.join(stateDir, projectId, "omc-shadow.git"),
+      path.join(stateDir, projectId, "omc", "plan-sync-shadow.git"),
     );
     expect(fs.existsSync(shadowRepoPath)).toBe(true);
     expect(fs.statSync(path.join(shadowRepoPath, "HEAD")).isFile()).toBe(true);
@@ -129,8 +129,8 @@ describe("init --track shadow (integration)", () => {
     shadowInit(["--remote", explicitRemote]);
 
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
 
     expect(
@@ -170,8 +170,8 @@ describe("init --track shadow (integration)", () => {
     expect(excludeContents.split("\n")).toContain(".omc/");
 
     const projectId = resolveProjectId(worktreePath);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
     expect(fs.existsSync(shadowRepoPath)).toBe(true);
   });

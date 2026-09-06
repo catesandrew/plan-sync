@@ -38,17 +38,17 @@ describe("uninstall --track shadow (integration)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -72,10 +72,10 @@ describe("uninstall --track shadow (integration)", () => {
     shadowPush([]);
 
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
-    const refName = `refs/omc/${projectId}/data`;
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
 
     expect(fs.existsSync(shadowRepoPath)).toBe(true);
     expect(
@@ -86,7 +86,7 @@ describe("uninstall --track shadow (integration)", () => {
 
     expect(fs.existsSync(shadowRepoPath)).toBe(false);
     expect(
-      execFileSync("git", ["ls-remote", originRemote, "refs/omc/*"], {
+      execFileSync("git", ["ls-remote", originRemote, "refs/plan-sync/*"], {
         encoding: "utf8",
       }).trim(),
     ).toBe("");

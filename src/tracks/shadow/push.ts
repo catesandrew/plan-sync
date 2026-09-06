@@ -8,12 +8,14 @@ import {
   MANIFEST_FILENAME,
   resolveManifestSyncCandidates,
 } from "../../manifest";
+import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
-import { resolveProjectId, resolveShadowRepoPath } from "./paths";
+import { resolveRootDir } from "../../root";
+import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 import { scanForSecrets } from "./scan";
 
 /**
- * `omc-sync push --track shadow`
+ * `plan-sync push --track shadow [--root <dir>]`
  *
  * Implements Part B, Architecture steps 4-5 of
  * .omc/plans/shadow-ref-git-sync-for-omc-artifacts.md (US-006 / AC-B4):
@@ -33,25 +35,27 @@ import { scanForSecrets } from "./scan";
  *      one legitimate way a path's absence from the tree signals a real
  *      deletion.
  *   5. Commit the resulting tree with `commit-tree` against the previous
- *      tip of `refs/omc/<project-id>/data`, and push with a plain,
- *      non-force `git push` — the ordinary non-fast-forward rejection is
- *      the correctness mechanism for concurrent same-machine pushes, not a
- *      `--force-with-lease`.
+ *      tip of `refs/plan-sync/<project-id>/<root>/data`, and push with a
+ *      plain, non-force `git push` — the ordinary non-fast-forward
+ *      rejection is the correctness mechanism for concurrent same-machine
+ *      pushes, not a `--force-with-lease`.
  */
-export function run(_args: string[]): void {
+export function run(args: string[]): void {
+  const { value: rootFlag } = parseFlag(args, "root");
   const repoRoot = resolveRepoRoot();
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
   const projectId = resolveProjectId(repoRoot);
-  const shadowRepoPath = resolveShadowRepoPath(projectId);
+  const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 
   if (!fs.existsSync(shadowRepoPath)) {
     throw new Error(
-      `push --track shadow: no shadow repo found at ${shadowRepoPath} — run \`omc-sync init --track shadow\` first`,
+      `push --track shadow: no shadow repo found at ${shadowRepoPath} — run \`plan-sync init --track shadow\` first`,
     );
   }
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
-  const refName = `refs/omc/${projectId}/data`;
-  const manifestPath = defaultManifestPath(repoRoot);
+  const refName = resolveShadowRefName(projectId, rootDir);
+  const manifestPath = defaultManifestPath(repoRoot, rootDir);
 
   // Resolved before proceeding: a missing manifest FILE (as opposed to a
   // genuinely empty one) combined with a real previous tip on the ref is a
@@ -75,7 +79,7 @@ export function run(_args: string[]): void {
   const manifestPaths = resolveManifestSyncCandidates(manifestPath);
 
   const indexFile = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), "omc-sync-shadow-index-")),
+    fs.mkdtempSync(path.join(os.tmpdir(), "plan-sync-shadow-index-")),
     "index",
   );
   const indexEnv = { ...process.env, GIT_INDEX_FILE: indexFile };
@@ -86,7 +90,7 @@ export function run(_args: string[]): void {
     // guard), reused here rather than re-computed.
 
     for (const relPath of manifestPaths) {
-      const filePath = path.join(repoRoot, ".omc", relPath);
+      const filePath = path.join(repoRoot, rootDir, relPath);
 
       if (!fs.existsSync(filePath)) {
         // Ordinary, expected workflow: the user deleted the file locally
@@ -95,14 +99,14 @@ export function run(_args: string[]): void {
         // out of the new tree — this genuine absence is the one legitimate
         // deletion signal restore relies on.
         process.stderr.write(
-          `omc-sync: skipping ${relPath} — file no longer exists in .omc/ (not synced)\n`,
+          `plan-sync: skipping ${relPath} — file no longer exists in ${rootDir}/ (not synced)\n`,
         );
         continue;
       }
 
       if (fs.lstatSync(filePath).isSymbolicLink()) {
         process.stderr.write(
-          `omc-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
+          `plan-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
         );
         continue;
       }
@@ -132,12 +136,12 @@ export function run(_args: string[]): void {
             { env: indexEnv, stdio: "pipe" },
           );
           process.stderr.write(
-            `omc-sync: ${relPath} matches an advisory scan pattern (${matches.join(", ")}) — retaining previous synced version, not updating\n`,
+            `plan-sync: ${relPath} matches an advisory scan pattern (${matches.join(", ")}) — retaining previous synced version, not updating\n`,
           );
           surviving.push(relPath);
         } else {
           process.stderr.write(
-            `omc-sync: skipping ${relPath} — matched: ${matches.join(", ")} (advisory scan, never previously synced)\n`,
+            `plan-sync: skipping ${relPath} — matched: ${matches.join(", ")} (advisory scan, never previously synced)\n`,
           );
         }
         continue;
@@ -168,7 +172,7 @@ export function run(_args: string[]): void {
     if (fs.existsSync(manifestPath)) {
       if (fs.lstatSync(manifestPath).isSymbolicLink()) {
         process.stderr.write(
-          `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+          `plan-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
         );
       } else {
         const manifestBlobSha = execFileSync(
@@ -204,7 +208,7 @@ export function run(_args: string[]): void {
 
       if (previousTreeSha === treeSha) {
         process.stderr.write(
-          "omc-sync: nothing changed since the last push\n",
+          "plan-sync: nothing changed since the last push\n",
         );
         return;
       }
@@ -215,7 +219,7 @@ export function run(_args: string[]): void {
       // and the tree itself is empty, so skipping is genuinely correct
       // here rather than committing an empty root with no history.
       process.stderr.write(
-        "omc-sync: nothing to push (no manifest files, or all were skipped by the advisory scan)\n",
+        "plan-sync: nothing to push (no manifest files, or all were skipped by the advisory scan)\n",
       );
       return;
     }
@@ -224,7 +228,7 @@ export function run(_args: string[]): void {
     if (previousTip) {
       commitTreeArgs.push("-p", previousTip);
     }
-    commitTreeArgs.push("-m", `omc-sync: sync ${surviving.length} file(s)`);
+    commitTreeArgs.push("-m", `plan-sync: sync ${surviving.length} file(s)`);
 
     const commitSha = execFileSync("git", commitTreeArgs, {
       encoding: "utf8",

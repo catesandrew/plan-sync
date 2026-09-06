@@ -1,16 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { parseFlag } from "../../args";
 import { addToManifest, readManifest, defaultManifestPath, MANIFEST_FILENAME } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
+import { resolveRootDir } from "../../root";
 import { safeCopyFile, safeRemove } from "../../safe-write";
 import { siblingConfigPath, type SiblingConfig } from "./init";
 
-function readSiblingConfig(repoRoot: string): SiblingConfig {
-  const configPath = siblingConfigPath(repoRoot);
+function readSiblingConfig(repoRoot: string, rootDir: string): SiblingConfig {
+  const configPath = siblingConfigPath(repoRoot, rootDir);
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `pull --track sibling: no sibling config found at ${configPath} — run \`omc-sync init --track sibling\` first`,
+      `pull --track sibling: no sibling config found at ${configPath} — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -19,7 +21,7 @@ function readSiblingConfig(repoRoot: string): SiblingConfig {
   };
   if (!raw.sibling) {
     throw new Error(
-      `pull --track sibling: ${configPath} has no "sibling" entry — run \`omc-sync init --track sibling\` first`,
+      `pull --track sibling: ${configPath} has no "sibling" entry — run \`plan-sync init --track sibling\` first`,
     );
   }
 
@@ -46,14 +48,15 @@ function currentBranch(cwd: string): string {
  */
 function syncManifestFilesFromClone(
   repoRoot: string,
+  rootDir: string,
   clonePath: string,
   manifestPaths: string[],
 ): void {
-  const omcRoot = path.join(repoRoot, ".omc");
+  const omcRoot = path.join(repoRoot, rootDir);
 
   for (const relPath of manifestPaths) {
     const src = path.join(clonePath, relPath);
-    const dest = path.join(repoRoot, ".omc", relPath);
+    const dest = path.join(repoRoot, rootDir, relPath);
 
     if (!fs.existsSync(src)) {
       // Removed upstream (deletion propagation) — remove the anchor repo's
@@ -64,7 +67,7 @@ function syncManifestFilesFromClone(
 
     if (fs.lstatSync(src).isSymbolicLink()) {
       process.stderr.write(
-        `omc-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
+        `plan-sync: skipping symlink ${relPath} — symlinks are not synced\n`,
       );
       continue;
     }
@@ -73,9 +76,11 @@ function syncManifestFilesFromClone(
   }
 }
 
-export function run(_args: string[]): void {
+export function run(args: string[]): void {
+  const { value: rootFlag } = parseFlag(args, "root");
   const repoRoot = resolveRepoRoot();
-  const { clonePath } = readSiblingConfig(repoRoot);
+  const rootDir = resolveRootDir(repoRoot, rootFlag);
+  const { clonePath } = readSiblingConfig(repoRoot, rootDir);
   const branch = currentBranch(clonePath);
 
   try {
@@ -96,11 +101,11 @@ export function run(_args: string[]): void {
   // never `allow`-ed anything) still gets both the manifest AND the file
   // content it lists from a single `pull`, rather than requiring the user to
   // manually `allow` each path first and pull a second time.
-  const localManifestPath = defaultManifestPath(repoRoot);
+  const localManifestPath = defaultManifestPath(repoRoot, rootDir);
   mergeIncomingManifestFromClone(clonePath, localManifestPath);
 
   const manifestPaths = readManifest(localManifestPath);
-  syncManifestFilesFromClone(repoRoot, clonePath, manifestPaths);
+  syncManifestFilesFromClone(repoRoot, rootDir, clonePath, manifestPaths);
 }
 
 /**
@@ -121,7 +126,7 @@ function mergeIncomingManifestFromClone(
   }
   if (stat.isSymbolicLink()) {
     process.stderr.write(
-      `omc-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
+      `plan-sync: skipping symlink ${MANIFEST_FILENAME} — symlinks are not synced\n`,
     );
     return;
   }
@@ -137,7 +142,7 @@ function mergeIncomingManifestFromClone(
       addToManifest(localManifestPath, line);
     } catch (err) {
       process.stderr.write(
-        `omc-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
+        `plan-sync: skipping invalid incoming manifest entry '${line}': ${(err as Error).message}\n`,
       );
     }
   }

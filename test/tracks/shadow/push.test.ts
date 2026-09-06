@@ -48,17 +48,17 @@ describe("push --track shadow (integration)", () => {
     git(anchorRepo, ["commit", "-m", "initial commit"]);
 
     originalCwd = process.cwd();
-    originalOmcStateDir = process.env.OMC_STATE_DIR;
-    process.env.OMC_STATE_DIR = stateDir;
+    originalOmcStateDir = process.env.PLAN_SYNC_STATE_DIR;
+    process.env.PLAN_SYNC_STATE_DIR = stateDir;
     process.chdir(anchorRepo);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
     if (originalOmcStateDir === undefined) {
-      delete process.env.OMC_STATE_DIR;
+      delete process.env.PLAN_SYNC_STATE_DIR;
     } else {
-      process.env.OMC_STATE_DIR = originalOmcStateDir;
+      process.env.PLAN_SYNC_STATE_DIR = originalOmcStateDir;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -77,14 +77,14 @@ describe("push --track shadow (integration)", () => {
 
   function projectRef(): { projectId: string; shadowRepoPath: string; refName: string } {
     const projectId = resolveProjectId(anchorRepo);
-    const shadowRepoPath = resolveShadowRepoPath(projectId, {
-      env: { OMC_STATE_DIR: stateDir },
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
     });
-    return { projectId, shadowRepoPath, refName: `refs/omc/${projectId}/data` };
+    return { projectId, shadowRepoPath, refName: `refs/plan-sync/${projectId}/omc/data` };
   }
 
   /**
-   * Simulates restoring on a fresh machine: points OMC_STATE_DIR at a brand
+   * Simulates restoring on a fresh machine: points PLAN_SYNC_STATE_DIR at a brand
    * new temp dir, then re-runs `init --track shadow` against the *same*
    * remote so the local shadow repo is a fresh clone-equivalent rather than
    * the same on-disk repo that pushed. Mirrors restore.test.ts's helper of
@@ -92,7 +92,7 @@ describe("push --track shadow (integration)", () => {
    */
   function switchToFreshMachine(): void {
     const freshStateDir = path.join(tmpDir, `state-dir-fresh-${crypto.randomUUID()}`);
-    process.env.OMC_STATE_DIR = freshStateDir;
+    process.env.PLAN_SYNC_STATE_DIR = freshStateDir;
     shadowInit([]);
   }
 
@@ -276,7 +276,7 @@ describe("push --track shadow (integration)", () => {
     // "Process A": a shadow repo under stateDirA pushes first, establishing
     // the tip on origin.
     const stateDirA = path.join(tmpDir, "state-dir-a");
-    process.env.OMC_STATE_DIR = stateDirA;
+    process.env.PLAN_SYNC_STATE_DIR = stateDirA;
     shadowInit([]);
     writeManifest(["a.md"]);
     writeOmcFile("a.md", "from process A\n");
@@ -292,7 +292,7 @@ describe("push --track shadow (integration)", () => {
     // shadow repo is fresh), so it builds its next commit with no parent —
     // exactly the "built against a now-stale view of the tip" scenario.
     const stateDirB = path.join(tmpDir, "state-dir-b");
-    process.env.OMC_STATE_DIR = stateDirB;
+    process.env.PLAN_SYNC_STATE_DIR = stateDirB;
     shadowInit([]);
     writeManifest(["b.md"]);
     writeOmcFile("b.md", "from process B\n");
