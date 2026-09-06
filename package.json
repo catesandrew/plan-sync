@@ -2,13 +2,23 @@
   "name": "plan-sync",
   "version": "0.1.0",
   "description": "Durable .omc/.omx planning-artifact sync (sibling-repo and shadow-ref tracks)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/catesandrew/plan-sync.git"
+  },
+  "homepage": "https://github.com/catesandrew/plan-sync#readme",
+  "bugs": {
+    "url": "https://github.com/catesandrew/plan-sync/issues"
+  },
   "private": true,
   "bin": {
     "plan-sync": "dist/cli.js"
   },
   "main": "dist/cli.js",
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",

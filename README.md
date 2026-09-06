@@ -369,5 +369,11 @@ npm test
 
 ## Further reading
 
-For the full design rationale and ADR behind both tracks, see
-[`.omc/plans/shadow-ref-git-sync-for-omc-artifacts.md`](.omc/plans/shadow-ref-git-sync-for-omc-artifacts.md).
+For the full design rationale and ADR behind both tracks — including the
+reverse-engineering of `bd dolt push`'s mechanism and the three prior
+designs that were rejected during review before arriving at this one — see
+[`docs/DESIGN.md`](docs/DESIGN.md).
+
+## License
+
+[MIT](LICENSE)
