@@ -1,13 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { addToManifest, defaultManifestPath, readManifest } from "../manifest";
-
-const GLOB_META = /[*?[]/;
+import { hasGlobMeta, globToRegExp } from "../glob";
 
 /**
- * `omc-sync allow <path-or-glob>`
+ * `omc-sync allow <path-or-glob> [<path-or-glob> ...]`
  *
- * A literal `<path>` (no glob metacharacters) is added to the manifest
+ * Accepts one or more targets in a single call. Each is processed
+ * independently, in order:
+ *
+ * A literal target (no glob metacharacters) is added to the manifest
  * exactly as before — unchanged, backward-compatible behavior.
  *
  * A pattern containing `*`, `?`, or `[` is instead expanded by walking the
@@ -19,13 +21,18 @@ const GLOB_META = /[*?[]/;
  * tool.
  */
 export function run(args: string[]): void {
-  const [target] = args;
-  if (!target) {
+  if (args.length === 0) {
     throw new Error("allow: <path> argument is required");
   }
 
   const manifestPath = defaultManifestPath();
 
+  for (const target of args) {
+    processTarget(manifestPath, target);
+  }
+}
+
+function processTarget(manifestPath: string, target: string): void {
   if (!hasGlobMeta(target)) {
     addToManifest(manifestPath, target);
     return;
@@ -61,10 +68,6 @@ export function run(args: string[]): void {
   process.stdout.write(
     `omc-sync: allow: pattern '${target}' matched ${matches.length} file(s) — ${added} newly added, ${alreadyPresent} already present\n`,
   );
-}
-
-function hasGlobMeta(pattern: string): boolean {
-  return GLOB_META.test(pattern);
 }
 
 /**
@@ -104,71 +107,4 @@ function walkFiles(root: string, relDir: string, out: string[]): void {
       out.push(entryRel);
     }
   }
-}
-
-/**
- * Converts a simple glob pattern into an anchored `RegExp`, hand-rolled
- * (no new dependency, per repo convention): `*` matches any run of
- * characters except `/`, `?` matches exactly one character except `/`,
- * `**` (optionally followed by `/`) matches any run of characters
- * including `/` — i.e. any depth of subdirectories, including zero — and
- * `[...]`/`[!...]` character classes are passed through as regex character
- * classes.
- */
-function globToRegExp(pattern: string): RegExp {
-  let re = "";
-  let i = 0;
-
-  while (i < pattern.length) {
-    const c = pattern[i];
-
-    if (c === "*" && pattern[i + 1] === "*") {
-      if (pattern[i + 2] === "/") {
-        re += "(?:.*/)?";
-        i += 3;
-      } else {
-        re += ".*";
-        i += 2;
-      }
-      continue;
-    }
-
-    if (c === "*") {
-      re += "[^/]*";
-      i += 1;
-      continue;
-    }
-
-    if (c === "?") {
-      re += "[^/]";
-      i += 1;
-      continue;
-    }
-
-    if (c === "[") {
-      let j = i + 1;
-      let negate = false;
-      if (pattern[j] === "!") {
-        negate = true;
-        j++;
-      }
-      let cls = "";
-      while (j < pattern.length && pattern[j] !== "]") {
-        cls += pattern[j];
-        j++;
-      }
-      re += `[${negate ? "^" : ""}${cls}]`;
-      i = j + 1;
-      continue;
-    }
-
-    re += escapeRegExpChar(c);
-    i += 1;
-  }
-
-  return new RegExp(`^${re}$`);
-}
-
-function escapeRegExpChar(c: string): string {
-  return /[.+^${}()|\\]/.test(c) ? `\\${c}` : c;
 }

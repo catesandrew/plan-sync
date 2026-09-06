@@ -138,3 +138,36 @@ export function addToManifest(manifestPath: string, entryPath: string): void {
     `${needsLeadingNewline ? "\n" : ""}${entryPath}\n`,
   );
 }
+
+/**
+ * Removes `entryPath` from the manifest at `manifestPath` if present (exact
+ * string match against parsed entries — comments/blank lines are preserved
+ * as-is around it). Returns `true` if it was present and removed, `false`
+ * if it was already absent (a no-op, not an error — mirrors
+ * `addToManifest`'s idempotent-add semantics for the removal direction).
+ * No-op if the manifest file doesn't exist at all.
+ */
+export function removeFromManifest(manifestPath: string, entryPath: string): boolean {
+  if (!fs.existsSync(manifestPath)) {
+    return false;
+  }
+
+  const contents = fs.readFileSync(manifestPath, "utf8");
+  const lines = contents.split("\n");
+  let removed = false;
+
+  const kept = lines.filter((line) => {
+    if (line.trim() === entryPath) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (!removed) {
+    return false;
+  }
+
+  fs.writeFileSync(manifestPath, kept.join("\n"));
+  return true;
+}

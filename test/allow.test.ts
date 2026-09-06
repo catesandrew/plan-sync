@@ -133,4 +133,20 @@ describe("allow: glob expansion", () => {
       "plans/b.md",
     ]);
   });
+
+  it("accepts multiple targets (literal and glob, mixed) in a single call", () => {
+    writeOmcFile("notes.md");
+    writeOmcFile("todo.md");
+    writeOmcFile("plans/a.md");
+    writeOmcFile("plans/b.md");
+
+    allowRun(["notes.md", "todo.md", "plans/*.md"]);
+
+    expect(readManifest(defaultManifestPath()).sort()).toEqual([
+      "notes.md",
+      "plans/a.md",
+      "plans/b.md",
+      "todo.md",
+    ]);
+  });
 });

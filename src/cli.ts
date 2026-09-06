@@ -2,6 +2,7 @@
 
 import * as init from "./commands/init";
 import * as allow from "./commands/allow";
+import * as unallow from "./commands/unallow";
 import * as push from "./commands/push";
 import * as pull from "./commands/pull";
 import * as restore from "./commands/restore";
@@ -15,6 +16,7 @@ export type Command = {
 export const COMMANDS: Record<string, Command> = {
   init,
   allow,
+  unallow,
   push,
   pull,
   restore,
@@ -26,7 +28,8 @@ export const USAGE = `Usage: omc-sync <command> [options]
 
 Commands:
   init       Initialize a sync track (sibling repo or shadow ref)
-  allow      Add a path to the sync manifest
+  allow      Add a path (or glob pattern) to the sync manifest
+  unallow    Remove a path (or glob pattern) from the sync manifest
   push       Push manifest-listed files to the sync destination
   pull       Pull manifest-listed files from the sync destination
   restore    Materialize a prior synced state locally

@@ -93,17 +93,33 @@ what to set up, so it never guesses.
 
 ## The manifest: nothing syncs unless you `allow` it
 
-Both tracks share one manifest file, `.omc/.sync-manifest`, and one command
-to add to it:
+Both tracks share one manifest file, `.omc/.sync-manifest`, and two commands
+to manage it:
 
 ```
-omc-sync allow <path>
-omc-sync allow <glob-pattern>
+omc-sync allow <path-or-glob> [<path-or-glob> ...]
+omc-sync unallow <path-or-glob> [<path-or-glob> ...]
 ```
 
 `<path>`/`<pattern>` is relative to `.omc/` (e.g. `omc-sync allow
-plans/foo.md`, not `.omc/plans/foo.md`). Adding an already-present path is a
-no-op — the manifest never gets a duplicate entry.
+plans/foo.md`, not `.omc/plans/foo.md`). Both commands accept multiple
+targets in one call (`omc-sync allow a.md b.md "plans/*.md"`), each processed
+independently. Adding an already-present path is a no-op — the manifest
+never gets a duplicate entry. Removing a path that isn't present is also a
+no-op, not an error.
+
+`unallow` matches glob patterns against the manifest's *current entries*,
+not the filesystem — so you can remove an entry even if its file was already
+deleted from disk.
+
+### Editing the manifest by hand
+
+`.omc/.sync-manifest` is a plain text file, one path per line; blank lines
+and `#`-prefixed comment lines are ignored. You can open it in any editor
+and add, remove, or comment out lines directly — it's validated on every
+read (an out-of-bounds line is skipped with a warning, not trusted blindly),
+so hand-editing is safe. `allow`/`unallow` are just a convenient CLI for the
+same file; neither is required.
 
 Nothing under `.omc/` is ever synced unless it has been explicitly added to
 the manifest with `allow`. There is no automatic directory- or
@@ -270,7 +286,8 @@ reviewed and are comfortable syncing.
 | Command | Tracks | Key flags |
 |---|---|---|
 | `init` | both (always requires `--track`) | `--track sibling --remote <url> --clone-path <path>` &nbsp;/&nbsp; `--track shadow [--remote <url>]` |
-| `allow <path-or-glob>` | both (shared manifest) | — |
+| `allow <path-or-glob> [...]` | both (shared manifest) | — |
+| `unallow <path-or-glob> [...]` | both (shared manifest) | — |
 | `push` | both | — |
 | `pull` | sibling only | — |
 | `restore` | shadow only | `[--ref <sha-or-ref>]` |
