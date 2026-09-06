@@ -1,5 +1,15 @@
 export type Track = "sibling" | "shadow";
 
+/**
+ * Checks whether `--help`/`-h` appears anywhere in `args`. Commands must
+ * call this FIRST, before any other flag parsing or validation, so that
+ * `--help` works regardless of its position in the argument list and never
+ * triggers the command's real side effects or "argument required" errors.
+ */
+export function hasHelpFlag(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
+
 const VALID_TRACKS: Track[] = ["sibling", "shadow"];
 
 /**

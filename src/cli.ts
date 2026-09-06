@@ -48,6 +48,11 @@ Run "plan-sync <command> --help" for command-specific options.
 export function dispatch(argv: string[]): number {
   const [commandName, ...rest] = argv;
 
+  if (commandName === "--help" || commandName === "-h") {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
   if (!commandName || !(commandName in COMMANDS)) {
     process.stdout.write(USAGE);
     return 1;

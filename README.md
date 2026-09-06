@@ -315,6 +315,8 @@ falls back to whichever track was most recently `init`-ed in this repo (see
 with a message pointing you at the right command for that track, rather
 than doing nothing silently.
 
+Run `plan-sync <command> --help` (or `-h`) for command-specific options.
+
 ## Configurable root directory: `--root <dir>`
 
 Every command in the table above accepts `--root <dir>`, which generalizes

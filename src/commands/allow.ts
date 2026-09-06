@@ -1,9 +1,17 @@
 import * as path from "node:path";
-import { parseFlag } from "../args";
+import { hasHelpFlag, parseFlag } from "../args";
 import { addToManifest, defaultManifestPath } from "../manifest";
 import { expandGlobUnderRoot } from "../glob";
 import { resolveRepoRoot } from "../repo-root";
 import { resolveRootDir } from "../root";
+
+const HELP_TEXT = `Usage: plan-sync allow <path-or-glob> [<path-or-glob> ...] [--root <dir>]
+
+Adds one or more paths (or glob patterns) to the sync manifest.
+
+Flags:
+  --root <dir>  Root directory to sync (optional, e.g. ".omc")
+`;
 
 /**
  * `plan-sync allow <path-or-glob> [<path-or-glob> ...] [--root <dir>]`
@@ -26,6 +34,11 @@ import { resolveRootDir } from "../root";
  * push/status.
  */
 export function run(args: string[]): void {
+  if (hasHelpFlag(args)) {
+    process.stdout.write(HELP_TEXT);
+    return;
+  }
+
   const { value: rootFlag, rest } = parseFlag(args, "root");
   if (rest.length === 0) {
     throw new Error("allow: <path> argument is required");

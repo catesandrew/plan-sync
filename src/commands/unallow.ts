@@ -1,8 +1,18 @@
-import { parseFlag } from "../args";
+import { hasHelpFlag, parseFlag } from "../args";
 import { defaultManifestPath, readManifest, removeFromManifest } from "../manifest";
 import { hasGlobMeta, globToRegExp } from "../glob";
 import { resolveRepoRoot } from "../repo-root";
 import { resolveRootDir } from "../root";
+
+const HELP_TEXT = `Usage: plan-sync unallow <path-or-glob> [<path-or-glob> ...] [--root <dir>]
+
+Removes one or more paths (or glob patterns) from the sync manifest.
+A literal target removes that exact entry; a glob pattern is matched
+against current manifest entries and every match is removed.
+
+Flags:
+  --root <dir>  Root directory to sync (optional, e.g. ".omc")
+`;
 
 /**
  * `plan-sync unallow <path-or-glob> [<path-or-glob> ...] [--root <dir>]`
@@ -20,6 +30,11 @@ import { resolveRootDir } from "../root";
  * be able to remove it), and every matching entry is removed.
  */
 export function run(args: string[]): void {
+  if (hasHelpFlag(args)) {
+    process.stdout.write(HELP_TEXT);
+    return;
+  }
+
   const { value: rootFlag, rest } = parseFlag(args, "root");
   if (rest.length === 0) {
     throw new Error("unallow: <path> argument is required");
