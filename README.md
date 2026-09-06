@@ -52,10 +52,10 @@ single-machine personal backup mechanism.** It reproduces the same
 reverse-engineered trick `bd dolt push` uses to sync `.beads/` — a hidden bare
 git repository pushing to a custom ref (`refs/plan-sync/<project-id>/<root>/data`) outside
 `refs/heads/*`/`refs/tags/*`, invisible to `git status`/`git branch -a`/`git
-log --all`. It has no cross-machine conflict resolution and no `pull`; it
-supports only push-from-this-machine and restore-onto-this-machine. It is
-**not recommended for team-wide or multi-machine use** — if you need that,
-use Part A instead.
+log --all`. It has no cross-machine conflict resolution; it supports only
+push-from-this-machine and pull-onto-this-machine (`pull` materializes the
+pushed ref's tree, it doesn't merge). It is **not recommended for team-wide
+or multi-machine use** — if you need that, use Part A instead.
 
 ### "It says it pushed, but I don't see a branch or anything on GitHub"
 
@@ -159,10 +159,10 @@ never written to the manifest, only the pattern string itself is.
 
 **The manifest itself travels with the sync payload** in both tracks — you
 never need to `allow` `.sync-manifest` yourself. `push` always includes it,
-and `restore`/`pull` always merge the incoming entries into the local
-manifest (a union — it only ever adds entries, never removes ones already
-present locally). This is what makes the second-machine flow below work
-without manually re-running `allow` for every file.
+and `pull` always merges the incoming entries into the local manifest (a
+union — it only ever adds entries, never removes ones already present
+locally). This is what makes the second-machine flow below work without
+manually re-running `allow` for every file.
 
 ## Part A: sibling git repo
 
@@ -226,7 +226,7 @@ or auto-resolved.
 plan-sync init --track shadow [--remote <url>]
 plan-sync allow <path-or-glob>
 plan-sync push
-plan-sync restore [--ref <sha>]
+plan-sync pull [--ref <sha>]
 plan-sync status [--stale-after <duration>]
 plan-sync uninstall
 ```
@@ -243,7 +243,7 @@ plan-sync uninstall
   `refs/plan-sync/<project-id>/<root>/data`. If nothing actually changed since the last
   push, it's a genuine no-op (`"nothing changed since the last push"`) —
   that message means it worked and detected no delta, not that it failed.
-- `restore` materializes the tree at that ref (or a `--ref` override) back
+- `pull` materializes the tree at that ref (or a `--ref` override) back
   onto disk under `.omc/`, deleting any manifest-listed path that's
   genuinely absent from the target tree (not merely scan-skipped), and
   merges the incoming `.sync-manifest` into the local one.
@@ -269,12 +269,12 @@ plan-sync status
 git clone git@github.com:my-org/my-repo.git
 cd my-repo
 plan-sync init --track shadow
-plan-sync restore
+plan-sync pull
 plan-sync status
 ```
 
 `init --track shadow` is the same, idempotent command on every machine —
-there's no separate "bootstrap" step. `restore` brings back both file
+there's no separate "bootstrap" step. `pull` brings back both file
 content and the manifest itself.
 
 The shadow repo lives outside `.omc/`, at
@@ -283,6 +283,14 @@ otherwise at `${XDG_CACHE_HOME:-$HOME/.cache}/plan-sync-shadow/<project-id>/<roo
 Set `PLAN_SYNC_STATE_DIR` (or `XDG_CACHE_HOME`) to control where that data lives —
 for example, to centralize shadow repos for multiple projects outside the
 default cache location.
+
+`<project-id>` is the first 12 hex characters of the repo's root commit hash
+(`git rev-list --max-parents=0 HEAD`) — git's own content-addressed identity
+for "this is the same repository history" — not anything derived from the
+`origin` remote URL. That makes identity stable across repo renames, remote
+URL changes (including switching between SSH and HTTPS, or moving to a
+different host entirely), and independently computable on every machine/clone
+of the repo, since they all share the same root commit.
 
 The advisory content scan is a backstop, not a substitute for judgment about
 what you `allow`: it only catches a few specific secret shapes, and a file
@@ -297,16 +305,15 @@ reviewed and are comfortable syncing.
 | `allow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
 | `unallow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
 | `push` | both | `[--root <dir>]` |
-| `pull` | sibling only | `[--root <dir>]` |
-| `restore` | shadow only | `[--ref <sha-or-ref>] [--root <dir>]` |
+| `pull` | both | `[--root <dir>]` (shadow track also accepts `[--ref <sha-or-ref>]`) |
 | `status` | both | `--track shadow` accepts `[--stale-after <duration>]`; both accept `[--root <dir>]` |
 | `uninstall` | shadow only | `[--root <dir>]` |
 
 Every command except `init` accepts `--track sibling|shadow` explicitly, or
 falls back to whichever track was most recently `init`-ed in this repo (see
-"Global setup" above). Running `pull --track shadow` or `restore --track
-sibling` (etc.) errors with a message pointing you at the right command for
-that track, rather than doing nothing silently.
+"Global setup" above). Running `uninstall --track sibling` (etc.) errors
+with a message pointing you at the right command for that track, rather
+than doing nothing silently.
 
 ## Configurable root directory: `--root <dir>`
 
@@ -344,7 +351,7 @@ other's tree.
 
 ## Sanity-checking that it's really invisible
 
-After any `push`/`init`/`restore`, these should all be completely
+After any `push`/`init`/`pull`, these should all be completely
 unaffected on your primary repo:
 
 ```

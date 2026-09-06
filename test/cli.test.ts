@@ -61,7 +61,7 @@ describe("plan-sync CLI dispatch", () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("prints usage listing all 8 subcommands and exits non-zero when given no args", () => {
+  it("prints usage listing all 7 subcommands and exits non-zero when given no args", () => {
     const { exitCode, stdout } = captureOutput(() => dispatch([]));
 
     expect(exitCode).not.toBe(0);
@@ -72,7 +72,6 @@ describe("plan-sync CLI dispatch", () => {
       "unallow",
       "push",
       "pull",
-      "restore",
       "status",
       "uninstall",
     ]) {
@@ -89,7 +88,17 @@ describe("plan-sync CLI dispatch", () => {
     expect(stdout).toContain(USAGE);
   });
 
-  it.each(["init", "allow", "unallow", "push", "pull", "restore", "status", "uninstall"])(
+  it("treats 'restore' as an unrecognized command now that pull covers both tracks", () => {
+    const { exitCode, stdout } = captureOutput(() =>
+      dispatch(["restore", "--track", "shadow"]),
+    );
+
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toContain(USAGE);
+    expect(COMMANDS).not.toHaveProperty("restore");
+  });
+
+  it.each(["init", "allow", "unallow", "push", "pull", "status", "uninstall"])(
     "routes %s to its own command module (real error, not an unknown-command error)",
     (name) => {
       expect(COMMANDS).toHaveProperty(name);

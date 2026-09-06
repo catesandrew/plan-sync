@@ -5,7 +5,6 @@ import * as allow from "./commands/allow";
 import * as unallow from "./commands/unallow";
 import * as push from "./commands/push";
 import * as pull from "./commands/pull";
-import * as restore from "./commands/restore";
 import * as status from "./commands/status";
 import * as uninstall from "./commands/uninstall";
 
@@ -19,7 +18,6 @@ export const COMMANDS: Record<string, Command> = {
   unallow,
   push,
   pull,
-  restore,
   status,
   uninstall,
 };
@@ -31,8 +29,7 @@ Commands:
   allow      Add a path (or glob pattern) to the sync manifest
   unallow    Remove a path (or glob pattern) from the sync manifest
   push       Push manifest-listed files to the sync destination
-  pull       Pull manifest-listed files from the sync destination
-  restore    Materialize a prior synced state locally
+  pull       Pull/materialize manifest-listed files from the sync destination
   status     Report sync freshness/health
   uninstall  Remove sync configuration and state
 

@@ -8,10 +8,10 @@ import { dispatch } from "../../src/cli";
 /**
  * Feature: default track persistence — `init --track <x>` persists `x` as
  * the default track in `.omc/.sync-config.json`, so subsequent multi-track
- * commands (`push`/`pull`/`restore`/`status`/`uninstall`) work without
- * repeating `--track` on every invocation. An explicit `--track` still
- * overrides the persisted default, and omitting both with no default ever
- * persisted still throws the original clear error.
+ * commands (`push`/`pull`/`status`/`uninstall`) work without repeating
+ * `--track` on every invocation. An explicit `--track` still overrides the
+ * persisted default, and omitting both with no default ever persisted still
+ * throws the original clear error.
  */
 
 function git(cwd: string, args: string[]): string {
@@ -83,7 +83,7 @@ describe("e2e: default track persistence (via CLI dispatch)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("push/status/restore/uninstall work without --track after `init --track shadow` persisted the default", () => {
+  it("push/status/pull/uninstall work without --track after `init --track shadow` persisted the default", () => {
     expect(run(["init", "--track", "shadow"]).exitCode).toBe(0);
 
     fs.mkdirSync(path.join(anchorRepo, ".omc"), { recursive: true });
@@ -95,7 +95,9 @@ describe("e2e: default track persistence (via CLI dispatch)", () => {
     expect(run(["status"]).exitCode).toBe(0);
 
     fs.rmSync(path.join(anchorRepo, ".omc", "a.md"));
-    expect(run(["restore"]).exitCode).toBe(0);
+    // `pull` with no --track resolves the persisted default ("shadow") and
+    // must produce the same materialize-from-ref behavior `restore` used to.
+    expect(run(["pull"]).exitCode).toBe(0);
     expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"), "utf8")).toBe(
       "hello\n",
     );

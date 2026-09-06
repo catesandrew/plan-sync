@@ -66,13 +66,27 @@ export interface ResolveProjectIdOptions {
   execFileSyncFn?: typeof execFileSync;
 }
 
+const PROJECT_ID_LENGTH = 12;
+
 /**
  * Derives a stable, deterministic project id for `repoRoot` (default: the
  * git repository top level containing `process.cwd()`, via
- * `resolveRepoRoot()`): the slugified `origin` remote URL when one is
- * configured, else the slugified basename of the repo root directory.
- * Calling this repeatedly against the same repo state always yields the
- * same id.
+ * `resolveRepoRoot()`): the first 12 hex characters of the repo's root
+ * commit hash (`git rev-list --max-parents=0 HEAD`) — git's own
+ * content-addressed identity for "this is the same repository history".
+ *
+ * This is intentionally independent of the `origin` remote URL: renaming
+ * the remote, renaming the repo on its host, switching between SSH/HTTPS
+ * remotes, or moving to a different host entirely all leave the root
+ * commit (and therefore the project id) unchanged. It's also independently
+ * computable on every machine/clone of the repo without needing to already
+ * know a ref name.
+ *
+ * A repo can have more than one root commit (e.g. histories joined via
+ * `git merge --allow-unrelated-histories`); when `rev-list` reports
+ * multiple, they're sorted lexically and the first is used, so every
+ * clone/machine deterministically picks the same one regardless of commit
+ * order.
  */
 export function resolveProjectId(
   repoRoot: string = resolveRepoRoot(),
@@ -80,28 +94,20 @@ export function resolveProjectId(
 ): string {
   const run = options.execFileSyncFn ?? execFileSync;
 
-  let originUrl: string | undefined;
-  try {
-    originUrl = run("git", ["-C", repoRoot, "remote", "get-url", "origin"], {
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    originUrl = undefined;
+  const output = run("git", ["-C", repoRoot, "rev-list", "--max-parents=0", "HEAD"], {
+    encoding: "utf8",
+  });
+
+  const rootHashes = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .sort();
+
+  const rootHash = rootHashes[0];
+  if (!rootHash) {
+    throw new Error(`no root commit found for repository at '${repoRoot}'`);
   }
 
-  if (originUrl) {
-    return slugify(originUrl);
-  }
-
-  return slugify(path.basename(path.resolve(repoRoot)));
-}
-
-function slugify(input: string): string {
-  let s = input.trim().toLowerCase();
-  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, ""); // strip scheme://
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/[^a-z0-9]+/g, "-");
-  s = s.replace(/^-+|-+$/g, "");
-  return s || "repo";
+  return rootHash.slice(0, PROJECT_ID_LENGTH);
 }

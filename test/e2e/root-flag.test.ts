@@ -99,7 +99,7 @@ describe("e2e: --root <dir> flag (via CLI dispatch)", () => {
     expect(fs.existsSync(path.join(anchorRepo, ".omc"))).toBe(false);
 
     fs.rmSync(path.join(anchorRepo, ".omx", "doc.md"));
-    expect(run(["restore", "--track", "shadow", "--root", ".omx"]).exitCode).toBe(0);
+    expect(run(["pull", "--track", "shadow", "--root", ".omx"]).exitCode).toBe(0);
     expect(fs.readFileSync(path.join(anchorRepo, ".omx", "doc.md"), "utf8")).toBe(
       "hello from omx\n",
     );

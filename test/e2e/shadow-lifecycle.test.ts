@@ -88,7 +88,7 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("init -> allow -> push -> fresh-machine restore -> checksum match -> uninstall, all through dispatch()", () => {
+  it("init -> allow -> push -> fresh-machine pull -> checksum match -> uninstall, all through dispatch()", () => {
     // --- Scratch anchor repo: init the shadow track, allow 2 files, push. ---
     expect(run(["init", "--track", "shadow"]).exitCode).toBe(0);
 
@@ -111,7 +111,7 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
     expect(fs.existsSync(originalShadowRepoPath)).toBe(true);
 
     // --- Simulate a fresh machine: a brand new PLAN_SYNC_STATE_DIR, re-init
-    // against the same remote (same anchor repo -> same origin -> same
+    // against the same remote (same anchor repo -> same root commit -> same
     // project id), so the shadow repo is a fresh clone-equivalent rather
     // than the same on-disk repo that pushed. ---
     const freshStateDir = path.join(tmpDir, "state-dir-fresh");
@@ -125,12 +125,12 @@ describe("e2e: shadow track full lifecycle (via CLI dispatch)", () => {
     expect(fs.existsSync(freshShadowRepoPath)).toBe(true);
     expect(freshShadowRepoPath).not.toBe(originalShadowRepoPath);
 
-    // Remove the local copies so restore is proven to actually (re)write
+    // Remove the local copies so pull is proven to actually (re)write
     // them from the remote, not merely observe they're "already there".
     fs.rmSync(path.join(anchorRepo, ".omc", "doc1.md"));
     fs.rmSync(path.join(anchorRepo, ".omc", "doc2.md"));
 
-    expect(run(["restore", "--track", "shadow"]).exitCode).toBe(0);
+    expect(run(["pull", "--track", "shadow"]).exitCode).toBe(0);
 
     const restoredDoc1 = fs.readFileSync(path.join(anchorRepo, ".omc", "doc1.md"));
     const restoredDoc2 = fs.readFileSync(path.join(anchorRepo, ".omc", "doc2.md"));
