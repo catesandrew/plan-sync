@@ -47,7 +47,21 @@ export function resolveShadowRepoPath(
     return path.join(env.PLAN_SYNC_STATE_DIR, projectId, segment, SHADOW_REPO_FILENAME);
   }
 
-  const cacheHome = env.XDG_CACHE_HOME || path.join(homedir(), ".cache");
+  let cacheHome = env.XDG_CACHE_HOME;
+  if (!cacheHome) {
+    const home = homedir();
+    if (!home) {
+      // `os.homedir()` returns "" when `$HOME` is set-but-empty (it only
+      // falls back to a passwd lookup when `$HOME` is unset entirely) —
+      // silently joining "" here would build a repo-relative shadow-repo
+      // path (`.cache/...`) instead of failing loudly. Fail closed instead,
+      // matching the Go port's behavior for the same case.
+      throw new Error(
+        "could not resolve a home directory to derive the shadow-repo cache path — set XDG_CACHE_HOME or PLAN_SYNC_STATE_DIR explicitly",
+      );
+    }
+    cacheHome = path.join(home, ".cache");
+  }
   return path.join(cacheHome, "plan-sync-shadow", projectId, `${segment}.git`);
 }
 

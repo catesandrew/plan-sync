@@ -3,7 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dispatch, COMMANDS, USAGE } from "../src/cli";
+import {
+  dispatch,
+  COMMANDS,
+  IMPLEMENTATION_ID,
+  MUTATING_COMMANDS,
+  USAGE,
+} from "../src/cli";
 
 function captureOutput(fn: () => number) {
   let stdout = "";
@@ -117,4 +123,42 @@ describe("plan-sync CLI dispatch", () => {
       expect(stderr).toContain(name);
     },
   );
+
+  // The $PATH-collision identity marker (.omc/plans/go-port.md): with two
+  // same-purpose binaries potentially on one $PATH, every MUTATING command
+  // must announce which implementation ran it, on stderr, before anything
+  // else it writes there.
+  describe("stderr identity marker", () => {
+    it.each([...MUTATING_COMMANDS])(
+      "prints the identity marker as the first stderr line for the mutating command %s",
+      (name) => {
+        const { stderr } = captureOutput(() => dispatch([name]));
+
+        expect(stderr).toContain(`plan-sync: ${IMPLEMENTATION_ID} (${name})\n`);
+        // FIRST line, ahead of the command's own error output — so a user
+        // whose $PATH has both binaries can attribute the failure.
+        expect(stderr.split("\n")[0]).toBe(
+          `plan-sync: ${IMPLEMENTATION_ID} (${name})`,
+        );
+      },
+    );
+
+    it("does not print the identity marker for the read-only status command", () => {
+      const { stderr } = captureOutput(() => dispatch(["status"]));
+
+      expect(MUTATING_COMMANDS.has("status")).toBe(false);
+      expect(stderr).not.toContain(IMPLEMENTATION_ID);
+    });
+
+    it("does not print the identity marker for an unrecognized command", () => {
+      const { stderr } = captureOutput(() => dispatch(["not-a-real-command"]));
+
+      expect(stderr).not.toContain(IMPLEMENTATION_ID);
+    });
+
+    it("identifies this implementation as ts/<version>, distinguishably from the Go binary", () => {
+      expect(IMPLEMENTATION_ID).toBe("ts/0.1.0");
+      expect(IMPLEMENTATION_ID).not.toContain("go/");
+    });
+  });
 });

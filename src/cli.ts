@@ -22,6 +22,50 @@ export const COMMANDS: Record<string, Command> = {
   uninstall,
 };
 
+/**
+ * `<impl>/<version>` half of the stderr identity marker.
+ *
+ * Kept in sync by hand with `package.json`'s `version` (importing it would
+ * pull package.json into `dist/` via `rootDir`-relative emit, which is not
+ * worth it for one string).
+ */
+export const IMPLEMENTATION_ID = "ts/0.1.0";
+
+/**
+ * Commands that mutate something — the manifest, `.sync-config.json`, the
+ * local working tree, the clone, or the remote. `status` is deliberately
+ * absent: it is read-only, so it emits no identity marker.
+ */
+export const MUTATING_COMMANDS = new Set([
+  "init",
+  "allow",
+  "unallow",
+  "push",
+  "pull",
+  "uninstall",
+]);
+
+/**
+ * Writes the one-line `$PATH`-collision identity marker to stderr.
+ *
+ * Two same-purpose binaries (the npm-linked TS `plan-sync` and the Go
+ * `plan-sync-go`) can both be on a user's `$PATH`, and nothing in the
+ * output of a mutating command otherwise says which one ran it. So every
+ * mutating command announces itself — as the FIRST thing on stderr, before
+ * any warning or error — in a shape that is unambiguously greppable and
+ * cannot be confused with the `plan-sync: <message>` error prefix used
+ * everywhere else: the payload is always `<impl>/<version> (<command>)`,
+ * e.g. `plan-sync: ts/0.1.0 (push)` vs. `plan-sync: go/0.1.0 (push)`.
+ *
+ * Emitted per *command name*, not per side effect: `push --help` mutates
+ * nothing but still prints the marker, because the question the marker
+ * answers ("which binary is this?") is exactly the one a user asking for
+ * help has.
+ */
+function writeIdentityMarker(commandName: string): void {
+  process.stderr.write(`plan-sync: ${IMPLEMENTATION_ID} (${commandName})\n`);
+}
+
 export const USAGE = `Usage: plan-sync <command> [options]
 
 Commands:
@@ -56,6 +100,10 @@ export function dispatch(argv: string[]): number {
   if (!commandName || !(commandName in COMMANDS)) {
     process.stdout.write(USAGE);
     return 1;
+  }
+
+  if (MUTATING_COMMANDS.has(commandName)) {
+    writeIdentityMarker(commandName);
   }
 
   try {

@@ -56,6 +56,15 @@ describe("resolveShadowRepoPath", () => {
     );
   });
 
+  it("fails closed with a clear error when no home directory can be resolved, rather than silently building a repo-relative path (regression test)", () => {
+    expect(() =>
+      resolveShadowRepoPath("my-project", ".omc", {
+        env: {},
+        homedir: () => "",
+      }),
+    ).toThrow(/could not resolve a home directory/);
+  });
+
   it("strips the leading dot from rootDir so two roots on the same project never collide", () => {
     const omcPath = resolveShadowRepoPath("my-project", ".omc", {
       env: { PLAN_SYNC_STATE_DIR: "/state/dir" },

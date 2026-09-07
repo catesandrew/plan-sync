@@ -68,22 +68,40 @@ function isInitializedRoot(repoRoot: string, candidate: string): boolean {
  * sync-config path, shadow ref/repo-path segments); an unvalidated value
  * here would reopen exactly the kind of path-escape this codebase otherwise
  * guards against.
+ *
+ * It additionally rejects any value whose leading-dot-stripped form (see
+ * `rootSegment`) would itself be unsafe — notably `'...'`, which passes every
+ * check above yet strips to `'..'`, escaping a directory level wherever the
+ * segment is later joined onto a path and producing an invalid git refname.
  */
 function validateRoot(root: string): string {
   const trimmed = root.trim();
-  if (
-    trimmed.length === 0 ||
-    trimmed === "." ||
-    trimmed === ".." ||
-    path.isAbsolute(trimmed) ||
-    trimmed.includes("/") ||
-    trimmed.includes("\\")
-  ) {
+  if (isUnsafeSegment(trimmed) || path.isAbsolute(trimmed)) {
     throw new Error(
       `--root must be a single directory name with no path separators, got '${root}'`,
     );
   }
+  const stripped = stripLeadingDot(trimmed);
+  if (isUnsafeSegment(stripped)) {
+    throw new Error(
+      `--root '${root}' strips to the unsafe namespace segment '${stripped}'`,
+    );
+  }
   return trimmed;
+}
+
+function stripLeadingDot(rootDir: string): string {
+  return rootDir.startsWith(".") ? rootDir.slice(1) : rootDir;
+}
+
+function isUnsafeSegment(value: string): boolean {
+  return (
+    value.length === 0 ||
+    value === "." ||
+    value === ".." ||
+    value.includes("/") ||
+    value.includes("\\")
+  );
 }
 
 /**
@@ -91,7 +109,19 @@ function validateRoot(root: string): string {
  * `omx`), for use in contexts that bake the root into a namespace segment
  * (the shadow-track ref name and local shadow-repo path) where a literal
  * leading dot is either invalid or merely noisy.
+ *
+ * The stripped result is re-validated: stripping a dot can turn an
+ * otherwise-valid-looking root such as `'...'` into `'..'`, which escapes a
+ * directory level when joined onto a path (e.g. under `PLAN_SYNC_STATE_DIR`)
+ * and is an invalid git refname. Such inputs throw rather than silently
+ * yielding a traversal segment.
  */
 export function rootSegment(rootDir: string): string {
-  return rootDir.startsWith(".") ? rootDir.slice(1) : rootDir;
+  const segment = stripLeadingDot(rootDir);
+  if (isUnsafeSegment(segment)) {
+    throw new Error(
+      `root '${rootDir}' strips to the unsafe namespace segment '${segment}'`,
+    );
+  }
+  return segment;
 }

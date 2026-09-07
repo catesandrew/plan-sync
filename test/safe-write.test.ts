@@ -66,6 +66,52 @@ describe("safe-write", () => {
       expect(() => safeWriteFile(root, dest, "x\n")).not.toThrow();
       expect(safeWriteFile(root, dest, "x\n")).toBe(false);
     });
+
+    // Net-new case (e) per .omc/plans/go-port.md: a DANGLING symlink AT the
+    // destination path itself, not as a mid-path ancestor. Ported alongside
+    // its Go counterpart,
+    // TestSafeWriteFileRefusesDanglingSymlinkAtDestinationItself. This is
+    // the case fs.existsSync reports as "doesn't exist" because it follows
+    // the link (findings 6 and 7 in docs/HARDENING-HISTORY.md) — the guard
+    // must see the link via lstat and refuse rather than create the outside
+    // target through it.
+    it("refuses to write through a DANGLING symlink at the destination itself", () => {
+      const outsideTarget = path.join(tmpDir, "outside-not-yet-created.txt");
+      const dest = path.join(root, "dangling.md");
+      fs.symlinkSync(outsideTarget, dest);
+
+      // Precondition: the follow-the-link view reports the destination as
+      // absent, while the lstat view sees the symlink. If this ever stops
+      // holding, the guard's choice of lstat is no longer load-bearing.
+      expect(fs.existsSync(dest)).toBe(false);
+      expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true);
+
+      expect(safeWriteFile(root, dest, "attack\n")).toBe(false);
+      expect(fs.existsSync(outsideTarget)).toBe(false);
+    });
+
+    // Net-new case (f) per .omc/plans/go-port.md: a LIVE symlinked ancestor
+    // at path depth >= 2 where the destination's IMMEDIATE parent does not
+    // exist on disk yet. Ported alongside its Go counterpart,
+    // TestSafeWriteFileRefusesLiveSymlinkedAncestorTwoLevelsUp. An
+    // implementation that only checked the immediate parent (or only its
+    // existence) would miss this and let the mkdir-recursive step walk
+    // straight through the symlink — finding 8 in
+    // docs/HARDENING-HISTORY.md.
+    it("refuses to write through a live symlinked ancestor two levels up when the immediate parent does not exist", () => {
+      const outsideDir = path.join(tmpDir, "outside-deep");
+      fs.mkdirSync(outsideDir, { recursive: true });
+      fs.symlinkSync(outsideDir, path.join(root, "plans"));
+
+      // root/plans/sub does NOT exist (neither does outsideDir/sub), so the
+      // destination's immediate parent (root/plans/sub/deep) is two levels
+      // below the symlink and three below the nearest existing entry.
+      const dest = path.join(root, "plans", "sub", "deep", "file.md");
+      expect(fs.existsSync(path.join(outsideDir, "sub"))).toBe(false);
+
+      expect(safeWriteFile(root, dest, "attack\n")).toBe(false);
+      expect(fs.existsSync(path.join(outsideDir, "sub"))).toBe(false);
+    });
   });
 
   describe("safeCopyFile", () => {

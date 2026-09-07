@@ -1,5 +1,7 @@
 # plan-sync
 
+[github.com/catesandrew/plan-sync](https://github.com/catesandrew/plan-sync) · [MIT licensed](LICENSE)
+
 `plan-sync` is a CLI for durably syncing the human-authored planning artifacts
 in `.omc/` (and the planned `.omx/`) — plans, drafts, research notes,
 handoffs, and similar files — to a remote, without those files ever showing
@@ -152,10 +154,19 @@ plan-sync allow "reports/?.md"      # single-character wildcard
 
 Quote glob patterns so your shell doesn't expand them first. Supported
 wildcards: `*` (anything except `/`), `?` (one character except `/`), `**`
-(anything including `/`, i.e. recursive), and `[...]` character classes.
-Directories and symlinks are never matched — only real files. `allow` still
-prints how many files currently match, purely for feedback — that count is
-never written to the manifest, only the pattern string itself is.
+(anything including `/`, i.e. recursive), and `[...]`/`[!...]` character
+classes, including `a-z`-style ranges. `*` and `?` count Unicode code
+points, not UTF-16 code units or bytes, so they match correctly against
+filenames containing emoji or other non-BMP characters. **Not supported**:
+POSIX named classes (`[[:alpha:]]` is parsed as a literal character set over
+`[`, `:`, `a`, `l`, `p`, `h`, followed by a literal `]` — it is not an
+"alphabetic character" class) and backslash-escaping inside a bracket
+expression (`\` is a literal member of the set, not an escape character).
+Both the TS and Go implementations parse the dialect identically, including
+these two unsupported cases. Directories and symlinks are never matched —
+only real files. `allow` still prints how many files currently match,
+purely for feedback — that count is never written to the manifest, only the
+pattern string itself is.
 
 **The manifest itself travels with the sync payload** in both tracks — you
 never need to `allow` `.sync-manifest` yourself. `push` always includes it,
@@ -375,6 +386,75 @@ npm install
 npm run build
 npm test
 ```
+
+## Go port (`plan-sync-go`) — Phase 1, coexisting with the TS binary
+
+A Go port lives alongside the TypeScript implementation in [`go/`](go/), built per
+[`.omc/plans/go-port.md`](.omc/plans/go-port.md). It is a small, dependency-free,
+cross-compiled binary — no Node runtime required — and is **not** a replacement for
+`plan-sync` yet: it implements Phase 1 of a three-phase plan.
+
+### Building
+
+```
+cd go
+go build -o plan-sync-go ./cmd/plan-sync-go
+```
+
+Cross-compile for any target (each produces a binary a few MB in size, well under the plan's
+15MB budget):
+
+```
+GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o plan-sync-go-darwin-arm64 ./cmd/plan-sync-go
+GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o plan-sync-go-darwin-amd64 ./cmd/plan-sync-go
+GOOS=linux  GOARCH=amd64 go build -ldflags="-s -w" -o plan-sync-go-linux-amd64  ./cmd/plan-sync-go
+GOOS=linux  GOARCH=arm64 go build -ldflags="-s -w" -o plan-sync-go-linux-arm64  ./cmd/plan-sync-go
+```
+
+Run the Go test suite with `cd go && go test ./...`.
+
+### What Phase 1 supports
+
+`plan-sync-go` implements six commands: `init`, `allow`, `unallow`, `push`, `pull`, `status`.
+**There is no `uninstall` command in Phase 1 at all.**
+
+- **Sibling track (`--track sibling`)**: fully functional, matching the TS implementation
+  byte-for-byte on the manifest file, `.sync-config.json`, and synced file content.
+- **Shadow track (`--track shadow`)**: `init` and `pull` (which materializes/restores the
+  shadow ref, same as the TS `restore` logic `pull` absorbed) are implemented. **`push` and
+  `status` are not available until Phase 2** and exit non-zero with a clear error if you try.
+
+**Known Phase 1 limitation**: because `init --track shadow` is fully implemented, it's
+possible to create real local (and, once pushed by the TS binary, remote) shadow-track state
+that `plan-sync-go` cannot yet push to, check the status of, or uninstall — those all require
+the TS binary until Phase 2 lands. `plan-sync-go init --track shadow --help` and the
+`push`/`status` error messages call this out explicitly.
+
+### Telling the two binaries apart: the stderr identity marker
+
+Both binaries can coexist on the same `$PATH` under different names during Phase 1–2
+(`plan-sync-go` vs. the TS `plan-sync`), but if you ever run one where you meant the other,
+every mutating command (`init`, `allow`, `unallow`, `push`, `pull` — not `status`, which is
+read-only) prints a one-line identity marker as the *first* line of stderr:
+
+```
+plan-sync: go/0.1.0 (push)     # the Go binary ran `push`
+plan-sync: ts/0.1.0 (push)     # the TS binary ran `push`
+```
+
+This is distinct from the ordinary `plan-sync: <error message>` error-line format, so it's
+always safe to grep for `plan-sync: go/` or `plan-sync: ts/` to see which binary touched a
+repo most recently.
+
+### Concurrency: no locking, in either implementation
+
+**Neither `plan-sync` (TS) nor `plan-sync-go` implements any locking.** Running either binary
+— or both, from different machines or terminals — against the same repo/remote at the same
+time is **unsupported** and can race. This isn't specific to the Go port: the TS
+implementation has never had locking either, but two same-purpose binaries on one machine
+during the coexistence window make a concurrent invocation more likely, not less. Avoid
+overlapping invocations against the same repo until a real concurrency design lands (tracked
+as a follow-up in [`.omc/plans/go-port.md`](.omc/plans/go-port.md)'s ADR).
 
 ## Further reading
 
