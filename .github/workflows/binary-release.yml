@@ -1,0 +1,66 @@
+# Scoped, interim binary distribution for plan-sync. Adapted from
+# catesworks/sauce-labs-cli's binary-release.yml, but deliberately without
+# its `release` job: that job requires a `tag` workflow_dispatch input and
+# derives the GitHub Release tag from it (or from `refs/tags/` on a real tag
+# push) -- plan-sync has zero tags today, so copying that job verbatim would
+# either be un-dispatchable (tag required, none exist) or would silently
+# create a release literally tagged "main". Dropping the release job removes
+# both problems and the `contents: write` permission it needed.
+#
+# Scoped to the two targets that are natively buildable and smoke-testable
+# on their own runner (no cross-compile flags): darwin-arm64 and linux-x64.
+# windows-x64/linux-arm64/darwin-x64 are intentionally excluded.
+#
+# Superseded by plan-sync/.omc/plans/go-port.md Phase 3 (Go cross-compile,
+# already covers 4/5 targets natively with no second toolchain) once that
+# ships -- this workflow is an interim measure, not a long-term commitment.
+name: Binary Release
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact: plan-sync-linux-x64
+          - os: macos-latest
+            target: darwin-arm64
+            artifact: plan-sync-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build single-file executable
+        shell: bash
+        run: bun build src/cli.ts --compile --outfile "${{ matrix.artifact }}"
+
+      - name: Verify binary exists
+        shell: bash
+        run: test -f "${{ matrix.artifact }}" && echo "OK"
+
+      - name: Smoke test (--help)
+        shell: bash
+        run: ./"${{ matrix.artifact }}" --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
