@@ -1,5 +1,7 @@
 # plan-sync
 
+**Tags:** `cli`
+
 [github.com/catesandrew/plan-sync](https://github.com/catesandrew/plan-sync) · [MIT licensed](LICENSE)
 
 `plan-sync` is a CLI for durably syncing the human-authored planning artifacts
