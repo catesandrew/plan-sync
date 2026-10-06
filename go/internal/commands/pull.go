@@ -8,7 +8,7 @@ import (
 	"plan-sync/go/internal/tracks/sibling"
 )
 
-const pullHelp = `Usage: plan-sync pull [--track <sibling|shadow>] [--ref <sha-or-ref>] [--root <dir>]
+const pullHelp = `Usage: plan-sync pull [--track <sibling|shadow>] [--ref <sha-or-ref>] [--root <dir>] [--dry-run]
 
 Pulls/materializes manifest-listed files from the sync destination
 (sibling repo or shadow git ref) back onto disk.
@@ -17,6 +17,7 @@ Flags:
   --track <sibling|shadow>  Sync track (optional if a default track is persisted)
   --ref <sha-or-ref>        Ref/commit to restore from (shadow track only, optional)
   --root <dir>              Root directory to sync (optional, e.g. ".omc")
+  --dry-run                 Report what would change without touching disk or refs (shadow track only)
 `
 
 // Pull is the Go port of src/commands/pull.ts. `pull --track shadow` is the

@@ -239,7 +239,7 @@ or auto-resolved.
 plan-sync init --track shadow [--remote <url>]
 plan-sync allow <path-or-glob>
 plan-sync push
-plan-sync pull [--ref <sha>]
+plan-sync pull [--ref <sha>] [--dry-run]
 plan-sync status [--stale-after <duration>]
 plan-sync uninstall
 ```
@@ -272,6 +272,11 @@ plan-sync uninstall
   files can't be merged: the local copy is kept and the incoming one is
   written beside it as `<path>.remote`. A remote deletion only removes a
   local file that still matches the last-synced version.
+  `pull --dry-run` changes nothing (no files, no manifest, and it doesn't
+  move the local shadow ref). It prints one line per file that would
+  change (`would-write`, `would-keep-local`, `would-merge`,
+  `would-conflict <path> (N hunk(s))`, `would-fallback-remote`,
+  `would-delete`, `would-keep`) and then a summary line.
 - `status` prints a per-file report (same four states as the sibling track,
   comparing local content against the pushed ref's tree via `git
   hash-object`), then reports the age of the last successful push, flagging
@@ -330,7 +335,7 @@ reviewed and are comfortable syncing.
 | `allow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
 | `unallow <path-or-glob> [...]` | both (shared manifest) | `[--root <dir>]` |
 | `push` | both | `[--root <dir>]` |
-| `pull` | both | `[--root <dir>]` (shadow track also accepts `[--ref <sha-or-ref>]`) |
+| `pull` | both | `[--root <dir>]` (shadow track also accepts `[--ref <sha-or-ref>]` and `[--dry-run]`) |
 | `status` | both | `--track shadow` accepts `[--stale-after <duration>]`; both accept `[--root <dir>]` |
 | `uninstall` | shadow only | `[--root <dir>]` |
 

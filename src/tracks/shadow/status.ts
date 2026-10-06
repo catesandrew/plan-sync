@@ -6,6 +6,7 @@ import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manife
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
+import { fetchIncomingSha } from "./restore";
 
 const DEFAULT_STALE_AFTER = "24h";
 
@@ -46,10 +47,15 @@ export function run(args: string[]): void {
   const gitDir = `--git-dir=${shadowRepoPath}`;
   const refName = resolveShadowRefName(projectId, rootDir);
 
-  tryFetchRef(gitDir, refName);
-  printPerFileStatus(repoRoot, rootDir, gitDir, refName);
+  // Read the remote's current tip by sha (FETCH_HEAD) rather than fetching
+  // into the local ref: status is read-only, and moving the local ref would
+  // silently advance the merge base pull's 3-way logic relies on (making a
+  // following pull treat every remote update as "already seen" and keep
+  // stale local copies). Falls back to the local ref when offline.
+  const readRef = fetchIncomingSha(gitDir, refName) ?? refName;
+  printPerFileStatus(repoRoot, rootDir, gitDir, readRef);
 
-  const lastPushIso = tryGetLastPushTimestamp(gitDir, refName);
+  const lastPushIso = tryGetLastPushTimestamp(gitDir, readRef);
 
   process.stdout.write(`plan-sync: shadow repo initialized at ${shadowRepoPath}\n`);
 
@@ -72,25 +78,6 @@ export function run(args: string[]): void {
   }
 
   process.stdout.write("OK\n");
-}
-
-/**
- * Best-effort fetch of `refName` from `origin` into the matching local ref
- * name, mirroring `restore.ts`'s same-named helper, so the per-file report
- * reflects the remote's current tip even on a machine that only ever
- * `init`-ed/`restore`-d (never pushed) and so has no local mirror ref yet.
- * Failure (offline, no origin, ref never pushed) is tolerated silently —
- * the per-file comparisons below already treat an unresolvable ref entry as
- * "not present in the ref".
- */
-function tryFetchRef(gitDir: string, refName: string): void {
-  try {
-    execFileSync("git", [gitDir, "fetch", "origin", `+${refName}:${refName}`], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch {
-    // Best-effort only.
-  }
 }
 
 /**

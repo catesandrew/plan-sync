@@ -3,8 +3,10 @@ package shadow
 import (
 	"crypto/sha256"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -214,6 +216,121 @@ func TestRestoreDoesNotDeleteLocallyModifiedFile(t *testing.T) {
 	}
 
 	assertFileContent(t, f.omcPath("gone.md"), "local edit\n")
+}
+
+// captureStdout is captureStderr for os.Stdout (pull --dry-run's report).
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		out, _ := io.ReadAll(r)
+		done <- string(out)
+	}()
+
+	fn()
+
+	os.Stdout = orig
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
+// snapshotOmc maps every regular file under .omc/ to its content.
+func snapshotOmc(t *testing.T, f *fixture) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(f.omcPath(), func(p string, d os.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		content, err := os.ReadFile(p)
+		out[p] = string(content)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("snapshotting .omc: %v", err)
+	}
+	return out
+}
+
+// Ports "--dry-run reports every action, mutates nothing (disk, manifest,
+// local ref), and a real pull afterwards still merges".
+func TestRestoreDryRunReportsAndMutatesNothing(t *testing.T) {
+	f := newFixture(t)
+
+	shadowRepoPath, refName := initAndSeedRef(t, f,
+		map[string]string{
+			".sync-manifest": "a.md\nb.md\nc.md\ngone.md\nkept.md\n",
+			"a.md":           "1\n2\n3\n4\n5\n", "b.md": "b1\n", "c.md": "c1\n",
+			"gone.md": "g\n", "kept.md": "k\n",
+		},
+		map[string]string{
+			".sync-manifest": "a.md\nb.md\nc.md\ngone.md\nkept.md\nnew.md\n",
+			"a.md":           "1 remote\n2\n3\n4\n5\n", "b.md": "b remote\n", "c.md": "c1\n",
+			"new.md": "new\n",
+		},
+	)
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	rewindLocalRef(f, shadowRepoPath, refName)
+
+	f.writeManifest("a.md", "b.md", "c.md", "gone.md", "kept.md")
+	f.writeOmcFile("a.md", "1\n2\n3\n4\n5 local\n")
+	f.writeOmcFile("b.md", "b local\n")
+	f.writeOmcFile("c.md", "c local\n")
+	f.writeOmcFile("gone.md", "g\n")
+	f.writeOmcFile("kept.md", "k local\n")
+
+	diskBefore := snapshotOmc(t, f)
+	refBefore := f.git(shadowRepoPath, "--git-dir="+shadowRepoPath, "rev-parse", refName)
+
+	var err error
+	out := captureStdout(t, func() { err = Restore([]string{"--dry-run"}) })
+	if err != nil {
+		t.Fatalf("Restore --dry-run: %v", err)
+	}
+
+	got := strings.Split(strings.TrimSpace(out), "\n")
+	slices.Sort(got)
+	want := []string{
+		"would-merge a.md",
+		"would-conflict b.md (1 hunk(s))",
+		"would-keep-local c.md",
+		"would-write new.md",
+		"would-delete gone.md",
+		"would-keep kept.md",
+		"plan-sync: dry-run: 6 file(s) would change (1 would-merge, 1 would-conflict, 1 would-keep-local, 1 would-write, 1 would-delete, 1 would-keep); nothing was modified",
+	}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("dry-run report:\n got %q\nwant %q", got, want)
+	}
+	if diskAfter := snapshotOmc(t, f); !maps.Equal(diskAfter, diskBefore) {
+		t.Fatalf("dry-run modified .omc:\nbefore %v\nafter  %v", diskBefore, diskAfter)
+	}
+	if refAfter := f.git(shadowRepoPath, "--git-dir="+shadowRepoPath, "rev-parse", refName); refAfter != refBefore {
+		t.Fatalf("dry-run moved the local ref: %s -> %s", refBefore, refAfter)
+	}
+
+	// The real pull afterwards still sees the untouched base and merges.
+	warnings := restoreCapturingStderr(t)
+	assertFileContent(t, f.omcPath("a.md"), "1 remote\n2\n3\n4\n5 local\n")
+	merged, _ := os.ReadFile(f.omcPath("b.md"))
+	assertContains(t, string(merged), "<<<<<<< local\nb local\n")
+	assertFileContent(t, f.omcPath("c.md"), "c local\n")
+	assertFileContent(t, f.omcPath("new.md"), "new\n")
+	assertFileContent(t, f.omcPath("kept.md"), "k local\n")
+	assertNotExists(t, f.omcPath("gone.md"))
+	manifestAfter, _ := os.ReadFile(f.omcPath(".sync-manifest"))
+	assertContains(t, string(manifestAfter), "new.md")
+	assertContains(t, warnings, "plan-sync: merged a.md")
 }
 
 // Ports "throws a clear error when the shadow repo hasn't been initialized".

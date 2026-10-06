@@ -51,7 +51,8 @@ import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from ".
  */
 export function run(args: string[]): void {
   const { value: refFlag, rest: rest1 } = parseFlag(args, "ref");
-  const { value: rootFlag } = parseFlag(rest1, "root");
+  const { value: rootFlag, rest: rest2 } = parseFlag(rest1, "root");
+  const dryRun = rest2.includes("--dry-run");
   const repoRoot = resolveRepoRoot();
   const rootDir = resolveRootDir(repoRoot, rootFlag);
   const projectId = resolveProjectId(repoRoot);
@@ -65,7 +66,7 @@ export function run(args: string[]): void {
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
   const derivedRefName = resolveShadowRefName(projectId, rootDir);
-  const refName = refFlag ?? derivedRefName;
+  let refName = refFlag ?? derivedRefName;
 
   // The local ref tip BEFORE fetching is the last state this machine
   // synced (pushed or pulled) — the merge base for deciding whether an
@@ -82,9 +83,24 @@ export function run(args: string[]): void {
   // explicit --ref that isn't a remote-tracking ref name), fall through to
   // `listTree`, which surfaces a clear error if the ref is unresolvable
   // both locally and remotely.
+  //
+  // --dry-run must not move the local ref (that would silently advance the
+  // merge base for the next real pull), so it reads the fetched tip by sha
+  // from FETCH_HEAD instead, falling back to the local ref when offline.
   if (!refFlag) {
-    tryFetchRef(gitDir, refName);
+    if (dryRun) {
+      refName = fetchIncomingSha(gitDir, refName) ?? refName;
+    } else {
+      tryFetchRef(gitDir, refName);
+    }
   }
+
+  // --dry-run: one stdout line per file that WOULD change, plus a summary.
+  const counts = new Map<string, number>();
+  const report = (action: string, relPath: string, detail = ""): void => {
+    counts.set(action, (counts.get(action) ?? 0) + 1);
+    process.stdout.write(`${action} ${relPath}${detail}\n`);
+  };
 
   const targetPaths = listTree(gitDir, refName);
   const targetSet = new Set(targetPaths);
@@ -111,9 +127,15 @@ export function run(args: string[]): void {
         // base when there's none, so differing sides become an add/add
         // conflict); if merge-file refuses (binary) or errors, park the
         // incoming copy beside the local one rather than drop it.
-        if (!base?.equals(content)) {
+        if (base?.equals(content)) {
+          if (dryRun) report("would-keep-local", relPath);
+        } else {
           const result = mergeFile(local, base ?? Buffer.alloc(0), content);
-          if (!result) {
+          if (dryRun) {
+            if (!result) report("would-fallback-remote", relPath);
+            else if (result.conflicts === 0) report("would-merge", relPath);
+            else report("would-conflict", relPath, ` (${result.conflicts} hunk(s))`);
+          } else if (!result) {
             safeWriteFile(omcRoot, `${destPath}.remote`, content);
             process.stderr.write(
               `plan-sync: conflict on ${relPath}: kept local, remote copy at ${relPath}.remote\n`,
@@ -130,7 +152,8 @@ export function run(args: string[]): void {
         continue;
       }
     }
-    safeWriteFile(omcRoot, destPath, content);
+    if (dryRun) report("would-write", relPath);
+    else safeWriteFile(omcRoot, destPath, content);
   }
 
   const localManifestPath = defaultManifestPath(repoRoot, rootDir);
@@ -153,10 +176,24 @@ export function run(args: string[]): void {
       if (!base?.equals(local)) {
         // Edited locally since the last sync (or never synced here):
         // the remote deletion must not destroy those edits.
+        if (dryRun) report("would-keep", relPath);
         continue;
       }
     }
+    if (dryRun) {
+      if (local !== undefined) report("would-delete", relPath);
+      continue;
+    }
     safeRemove(omcRoot, destPath);
+  }
+
+  if (dryRun) {
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    const breakdown = [...counts].map(([action, n]) => `${n} ${action}`).join(", ");
+    process.stdout.write(
+      `plan-sync: dry-run: ${total} file(s) would change${breakdown ? ` (${breakdown})` : ""}; nothing was modified\n`,
+    );
+    return;
   }
 
   if (targetSet.has(MANIFEST_FILENAME)) {
@@ -215,6 +252,24 @@ function everSyncedInHistory(gitDir: string, refName: string, relPath: string): 
     return out.length > 0;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Fetches `refName` from `origin` WITHOUT updating any local ref (only
+ * FETCH_HEAD; `--refmap=` disables opportunistic remote-tracking updates)
+ * and returns the fetched sha, or `undefined` if the fetch failed (offline,
+ * no origin, never pushed). For read-only callers (pull --dry-run, status)
+ * that must not advance the local ref restore uses as its merge base.
+ */
+export function fetchIncomingSha(gitDir: string, refName: string): string | undefined {
+  try {
+    execFileSync("git", [gitDir, "fetch", "--refmap=", "origin", refName], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return resolveLocalRef(gitDir, "FETCH_HEAD");
+  } catch {
+    return undefined;
   }
 }
 

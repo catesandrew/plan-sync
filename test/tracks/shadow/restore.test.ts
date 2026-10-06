@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { run as shadowInit } from "../../../src/tracks/shadow/init";
 import { run as shadowPush } from "../../../src/tracks/shadow/push";
 import { run as shadowRestore } from "../../../src/tracks/shadow/restore";
+import { run as shadowStatus } from "../../../src/tracks/shadow/status";
 import { resolveProjectId, resolveShadowRepoPath } from "../../../src/tracks/shadow/paths";
 
 function git(cwd: string, args: string[]): string {
@@ -220,6 +221,108 @@ describe("restore --track shadow (integration)", () => {
     expect(fs.readFileSync(path.join(anchorRepo, ".omc", "gone.md"), "utf8")).toBe(
       "local edit\n",
     );
+  });
+
+  /** Every file under .omc/ (relPath -> content), for before/after diffs. */
+  function snapshotOmc(): Record<string, string> {
+    const omc = path.join(anchorRepo, ".omc");
+    const out: Record<string, string> = {};
+    for (const rel of fs.readdirSync(omc, { recursive: true }) as string[]) {
+      const full = path.join(omc, rel);
+      if (fs.lstatSync(full).isFile()) out[rel] = fs.readFileSync(full, "utf8");
+    }
+    return out;
+  }
+
+  function localRefSha(): string {
+    const projectId = resolveProjectId(anchorRepo);
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
+    });
+    return execFileSync(
+      "git",
+      [`--git-dir=${shadowRepoPath}`, "rev-parse", `refs/plan-sync/${projectId}/omc/data`],
+      { encoding: "utf8" },
+    ).trim();
+  }
+
+  it("--dry-run reports every action, mutates nothing (disk, manifest, local ref), and a real pull afterwards still merges", () => {
+    shadowInit([]);
+    writeManifest(["a.md", "b.md", "c.md", "gone.md", "kept.md"]);
+    writeOmcFile("a.md", "1\n2\n3\n4\n5\n");
+    writeOmcFile("b.md", "b1\n");
+    writeOmcFile("c.md", "c1\n");
+    writeOmcFile("gone.md", "g\n");
+    writeOmcFile("kept.md", "k\n");
+    shadowPush([]);
+
+    // The "other machine" push: remote edits, two deletions, one new file.
+    writeManifest(["a.md", "b.md", "c.md", "gone.md", "kept.md", "new.md"]);
+    writeOmcFile("a.md", "1 remote\n2\n3\n4\n5\n");
+    writeOmcFile("b.md", "b remote\n");
+    writeOmcFile("new.md", "new\n");
+    fs.rmSync(path.join(anchorRepo, ".omc", "gone.md"));
+    fs.rmSync(path.join(anchorRepo, ".omc", "kept.md"));
+    shadowPush([]);
+    rewindLocalRef();
+
+    // This machine: still on the first sync, with its own local edits.
+    writeManifest(["a.md", "b.md", "c.md", "gone.md", "kept.md"]);
+    writeOmcFile("a.md", "1\n2\n3\n4\n5 local\n");
+    writeOmcFile("b.md", "b local\n");
+    writeOmcFile("c.md", "c local\n");
+    writeOmcFile("gone.md", "g\n");
+    writeOmcFile("kept.md", "k local\n");
+    fs.rmSync(path.join(anchorRepo, ".omc", "new.md"));
+
+    const diskBefore = snapshotOmc();
+    const refBefore = localRefSha();
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    shadowRestore(["--dry-run"]);
+    const out = stdoutSpy.mock.calls.map((call) => String(call[0])).join("");
+    stdoutSpy.mockRestore();
+
+    expect(out.split("\n").filter(Boolean).sort()).toEqual(
+      [
+        "would-merge a.md",
+        "would-conflict b.md (1 hunk(s))",
+        "would-keep-local c.md",
+        "would-write new.md",
+        "would-delete gone.md",
+        "would-keep kept.md",
+        "plan-sync: dry-run: 6 file(s) would change (1 would-merge, 1 would-conflict, 1 would-keep-local, 1 would-write, 1 would-delete, 1 would-keep); nothing was modified",
+      ].sort(),
+    );
+    expect(snapshotOmc()).toEqual(diskBefore);
+    expect(localRefSha()).toBe(refBefore);
+
+    // The real pull afterwards still sees the untouched base and merges.
+    const warnings = restoreCapturingStderr();
+    expect(readOmc("a.md")).toBe("1 remote\n2\n3\n4\n5 local\n");
+    expect(readOmc("b.md")).toContain("<<<<<<< local\nb local\n");
+    expect(readOmc("c.md")).toBe("c local\n");
+    expect(readOmc("new.md")).toBe("new\n");
+    expect(readOmc("kept.md")).toBe("k local\n");
+    expect(fs.existsSync(path.join(anchorRepo, ".omc", "gone.md"))).toBe(false);
+    expect(readOmc(".sync-manifest")).toContain("new.md");
+    expect(warnings).toContain("plan-sync: merged a.md");
+    expect(localRefSha()).not.toBe(refBefore);
+  });
+
+  it("status --track shadow does not advance the local ref (pull's merge base) when the remote is ahead", () => {
+    remoteAdvancedFromV1ToV2();
+    writeOmcFile("a.md", "v1\n");
+    const refBefore = localRefSha();
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    shadowStatus([]);
+    stdoutSpy.mockRestore();
+    expect(localRefSha()).toBe(refBefore);
+
+    // So the following pull still sees a.md as unmodified and takes v2.
+    shadowRestore([]);
+    expect(readOmc("a.md")).toBe("v2\n");
   });
 
   it("throws a clear error when the shadow repo hasn't been initialized", () => {

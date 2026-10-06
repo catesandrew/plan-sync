@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"plan-sync/go/internal/args"
@@ -69,7 +70,8 @@ import (
 // first mutation, precisely so a bad ref can never produce a partial write.
 func Restore(argv []string) error {
 	refFlag, rest1 := args.ParseFlag(argv, "ref")
-	rootFlag, _ := args.ParseFlag(rest1, "root")
+	rootFlag, rest2 := args.ParseFlag(rest1, "root")
+	dryRun := slices.Contains(rest2, "--dry-run")
 
 	repoRoot, err := reporoot.ResolveRepoRoot()
 	if err != nil {
@@ -124,7 +126,30 @@ func Restore(argv []string) error {
 		// Only for the derived ref: an explicit --ref may well be a raw sha
 		// or some other name that isn't a remote-tracking ref, matching the
 		// TypeScript original's `if (!refFlag)` guard.
-		tryFetchRef(gitDir, refName)
+		//
+		// --dry-run must not move the local ref (that would silently
+		// advance the merge base for the next real pull), so it reads the
+		// fetched tip by sha from FETCH_HEAD instead, falling back to the
+		// local ref when offline.
+		if dryRun {
+			if sha := fetchIncomingSha(gitDir, refName); sha != "" {
+				refName = sha
+			}
+		} else {
+			tryFetchRef(gitDir, refName)
+		}
+	}
+
+	// --dry-run: one stdout line per file that WOULD change, plus a summary
+	// (actions listed in first-seen order, matching the TS Map's).
+	counts := map[string]int{}
+	var order []string
+	report := func(action, relPath, detail string) {
+		if counts[action] == 0 {
+			order = append(order, action)
+		}
+		counts[action]++
+		fmt.Fprintf(os.Stdout, "%s %s%s\n", action, relPath, detail)
 	}
 
 	targetPaths, err := listTree(gitDir, refName)
@@ -165,9 +190,19 @@ func Restore(argv []string) error {
 				// add/add conflict); if merge-file refuses (binary) or
 				// errors, park the incoming copy beside the local one rather
 				// than drop it.
-				if !hasBase || !bytes.Equal(base, content) {
+				if hasBase && bytes.Equal(base, content) {
+					if dryRun {
+						report("would-keep-local", relPath, "")
+					}
+				} else {
 					merged, conflicts, ok := mergeFile(local, base, content)
 					switch {
+					case dryRun && !ok:
+						report("would-fallback-remote", relPath, "")
+					case dryRun && conflicts == 0:
+						report("would-merge", relPath, "")
+					case dryRun:
+						report("would-conflict", relPath, fmt.Sprintf(" (%d hunk(s))", conflicts))
 					case !ok:
 						safewrite.SafeWriteFile(omcRoot, destPath+".remote", content)
 						fmt.Fprintf(os.Stderr,
@@ -184,7 +219,11 @@ func Restore(argv []string) error {
 				continue
 			}
 		}
-		safewrite.SafeWriteFile(omcRoot, destPath, content)
+		if dryRun {
+			report("would-write", relPath, "")
+		} else {
+			safewrite.SafeWriteFile(omcRoot, destPath, content)
+		}
 	}
 
 	localManifestPath := filepath.Join(omcRoot, manifest.ManifestFilename)
@@ -200,14 +239,39 @@ func Restore(argv []string) error {
 			continue
 		}
 		destPath := filepath.Join(omcRoot, relPath)
-		if local, isLocal := readLocalFile(destPath); isLocal {
+		local, isLocal := readLocalFile(destPath)
+		if isLocal {
 			if base, hasBase := tryReadBlob(gitDir, baseSha, relPath); !hasBase || !bytes.Equal(base, local) {
 				// Edited locally since the last sync (or never synced
 				// here): the remote deletion must not destroy those edits.
+				if dryRun {
+					report("would-keep", relPath, "")
+				}
 				continue
 			}
 		}
+		if dryRun {
+			if isLocal {
+				report("would-delete", relPath, "")
+			}
+			continue
+		}
 		safewrite.SafeRemove(omcRoot, destPath)
+	}
+
+	if dryRun {
+		total := 0
+		breakdown := make([]string, 0, len(order))
+		for _, action := range order {
+			total += counts[action]
+			breakdown = append(breakdown, fmt.Sprintf("%d %s", counts[action], action))
+		}
+		detail := ""
+		if len(breakdown) > 0 {
+			detail = " (" + strings.Join(breakdown, ", ") + ")"
+		}
+		fmt.Fprintf(os.Stdout, "plan-sync: dry-run: %d file(s) would change%s; nothing was modified\n", total, detail)
+		return nil
 	}
 
 	if targetSet[manifest.ManifestFilename] {
@@ -291,6 +355,19 @@ func tryReadBlob(gitDir, sha, relPath string) ([]byte, bool) {
 	}
 	content, err := readBlob(gitDir, sha, relPath)
 	return content, err == nil
+}
+
+// fetchIncomingSha fetches refName from origin WITHOUT updating any local
+// ref (only FETCH_HEAD; `--refmap=` disables opportunistic remote-tracking
+// updates) and returns the fetched sha, or "" if the fetch failed (offline,
+// no origin, never pushed). Mirrors restore.ts's fetchIncomingSha, used by
+// read-only callers (pull --dry-run) that must not advance the local ref
+// Restore uses as its merge base.
+func fetchIncomingSha(gitDir, refName string) string {
+	if _, err := runGit(gitDir, "fetch", "--refmap=", "origin", refName); err != nil {
+		return ""
+	}
+	return tryGit(gitDir, "rev-parse", "--verify", "-q", "FETCH_HEAD")
 }
 
 // tryFetchRef best-effort fetches refName from origin into the identically
