@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,11 +27,15 @@ import (
 //
 // This is a true tree-sync, not an additive overlay:
 //   - every path present in the target tree is (re)written from the blob's
-//     exact bytes;
+//     exact bytes — unless the on-disk copy differs from the local ref's
+//     pre-fetch tip (the merge base), i.e. it was edited locally and not
+//     yet pushed: then local wins, and if the remote also changed, the
+//     incoming bytes land at `<path>.remote` with a stderr warning;
 //   - every path currently listed in the manifest that is *not* present in
 //     the target tree, but *was* present at some earlier commit reachable
 //     from the target ref (i.e. it was genuinely synced once and is now
-//     genuinely gone), is deleted, if present on disk.
+//     genuinely gone), is deleted, if present on disk and unchanged from
+//     the merge base.
 //
 // Deletion is deliberately scoped to (ref history \ target tree), NEVER to
 // (current manifest \ target tree): a path can be manifest-listed and
@@ -92,12 +97,21 @@ func Restore(argv []string) error {
 	}
 
 	gitDir := gitDirFlag(shadowRepoPath)
+	derivedRefName, err := shadowpaths.ResolveShadowRefName(projectID, rootDir)
+	if err != nil {
+		return err
+	}
+	// The local ref tip BEFORE fetching is the last state this machine
+	// synced (pushed or pulled) — the merge base for deciding whether an
+	// on-disk file was edited locally since then. Always the derived ref,
+	// even under --ref, so an explicit restore still can't clobber unpushed
+	// local edits. "" on a fresh machine: then every differing local file
+	// counts as locally modified.
+	baseSha := tryGit(gitDir, "rev-parse", "--verify", "-q", derivedRefName)
+
 	refName := refFlag
 	if refName == "" {
-		refName, err = shadowpaths.ResolveShadowRefName(projectID, rootDir)
-		if err != nil {
-			return err
-		}
+		refName = derivedRefName
 		// On a fresh machine (a shadow repo that was just init-ed but never
 		// pushed from), the local ref doesn't exist yet — only `origin`
 		// knows about it. Best-effort fetch it into the matching local ref
@@ -135,7 +149,27 @@ func Restore(argv []string) error {
 			return fmt.Errorf("restore --track shadow: failed to read '%s' at ref '%s': %w",
 				relPath, refName, err)
 		}
-		safewrite.SafeWriteFile(omcRoot, filepath.Join(omcRoot, relPath), content)
+		destPath := filepath.Join(omcRoot, relPath)
+		local, isLocal := readLocalFile(destPath)
+		if isLocal && bytes.Equal(local, content) {
+			continue
+		}
+		if isLocal {
+			base, hasBase := tryReadBlob(gitDir, baseSha, relPath)
+			if !hasBase || !bytes.Equal(base, local) {
+				// Edited locally since the last sync: keep it (the next push
+				// uploads it). If the remote ALSO changed (or there's no
+				// base to tell), park the incoming copy beside it rather
+				// than drop it.
+				if !hasBase || !bytes.Equal(base, content) {
+					safewrite.SafeWriteFile(omcRoot, destPath+".remote", content)
+					fmt.Fprintf(os.Stderr,
+						"plan-sync: conflict on %s: kept local, remote copy at %s.remote\n", relPath, relPath)
+				}
+				continue
+			}
+		}
+		safewrite.SafeWriteFile(omcRoot, destPath, content)
 	}
 
 	localManifestPath := filepath.Join(omcRoot, manifest.ManifestFilename)
@@ -150,7 +184,15 @@ func Restore(argv []string) error {
 			// deletion intent, so any local copy is left untouched.
 			continue
 		}
-		safewrite.SafeRemove(omcRoot, filepath.Join(omcRoot, relPath))
+		destPath := filepath.Join(omcRoot, relPath)
+		if local, isLocal := readLocalFile(destPath); isLocal {
+			if base, hasBase := tryReadBlob(gitDir, baseSha, relPath); !hasBase || !bytes.Equal(base, local) {
+				// Edited locally since the last sync (or never synced
+				// here): the remote deletion must not destroy those edits.
+				continue
+			}
+		}
+		safewrite.SafeRemove(omcRoot, destPath)
 	}
 
 	if targetSet[manifest.ManifestFilename] {
@@ -211,6 +253,29 @@ func everSyncedInHistory(gitDir, refName, relPath string) bool {
 		return false
 	}
 	return strings.TrimSpace(out) != ""
+}
+
+// readLocalFile reads the on-disk file's bytes only if it is a regular file
+// (Lstat, so a symlink at the destination reads as "not a local file" and
+// falls through to SafeWriteFile/SafeRemove's refusal path, exactly as
+// before).
+func readLocalFile(destPath string) ([]byte, bool) {
+	info, err := os.Lstat(destPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	content, err := os.ReadFile(destPath)
+	return content, err == nil
+}
+
+// tryReadBlob is readBlob at sha, reporting false when there is no base sha
+// or the path doesn't exist at that commit.
+func tryReadBlob(gitDir, sha, relPath string) ([]byte, bool) {
+	if sha == "" {
+		return nil, false
+	}
+	content, err := readBlob(gitDir, sha, relPath)
+	return content, err == nil
 }
 
 // tryFetchRef best-effort fetches refName from origin into the identically

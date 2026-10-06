@@ -94,10 +94,16 @@ describe("pull --track shadow (command wrapper)", () => {
     fs.rmSync(path.join(anchorRepo, ".omc", "gone.md"));
     shadowPush([]);
 
-    switchToFreshMachine();
-
-    // Pre-existing stale local copy proves pull actively deletes it.
-    writeOmcFile("gone.md", "stale copy that pull should delete\n");
+    // Rewind the local ref to the pre-deletion commit: this machine last
+    // synced a tree that still had gone.md, and still holds that unmodified
+    // copy — so pull actively deletes it (an edited copy would be kept).
+    const projectId = resolveProjectId(anchorRepo);
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
+    });
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
+    execFileSync("git", [`--git-dir=${shadowRepoPath}`, "update-ref", refName, `${refName}~1`]);
+    writeOmcFile("gone.md", "delete me\n");
 
     pullRun(["--track", "shadow"]);
 

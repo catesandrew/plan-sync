@@ -263,8 +263,6 @@ describe("push --track shadow (integration)", () => {
     // Restore against a FRESH shadow clone (simulating a new machine) must
     // not resurrect either deleted file.
     switchToFreshMachine();
-    writeOmcFile("one.md", "stale copy that restore should delete\n");
-    writeOmcFile("two.md", "stale copy that restore should delete\n");
 
     shadowRestore([]);
 

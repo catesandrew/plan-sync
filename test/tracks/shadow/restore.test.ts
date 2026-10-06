@@ -82,6 +82,92 @@ describe("restore --track shadow (integration)", () => {
     shadowInit([]);
   }
 
+  /**
+   * Moves this machine's local shadow ref back one commit, so restore sees
+   * the remote as one push ahead of what this machine last synced (the
+   * merge base) — as if another machine pushed in between.
+   */
+  function rewindLocalRef(): void {
+    const projectId = resolveProjectId(anchorRepo);
+    const shadowRepoPath = resolveShadowRepoPath(projectId, ".omc", {
+      env: { PLAN_SYNC_STATE_DIR: stateDir },
+    });
+    const refName = `refs/plan-sync/${projectId}/omc/data`;
+    execFileSync("git", [`--git-dir=${shadowRepoPath}`, "update-ref", refName, `${refName}~1`]);
+  }
+
+  /** Pushes v1 then v2 of a.md, then rewinds so this machine's base is v1. */
+  function remoteAdvancedFromV1ToV2(): void {
+    shadowInit([]);
+    writeManifest(["a.md"]);
+    writeOmcFile("a.md", "v1\n");
+    shadowPush([]);
+    writeOmcFile("a.md", "v2\n");
+    shadowPush([]);
+    rewindLocalRef();
+  }
+
+  it("3-way: a locally edited, unpushed file is preserved when the remote is unchanged", () => {
+    shadowInit([]);
+    writeManifest(["a.md"]);
+    writeOmcFile("a.md", "synced\n");
+    shadowPush([]);
+
+    writeOmcFile("a.md", "local edit\n");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    shadowRestore([]);
+    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    stderrSpy.mockRestore();
+
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"), "utf8")).toBe("local edit\n");
+    expect(fs.existsSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toBe(false);
+    expect(warnings).not.toContain("conflict");
+  });
+
+  it("3-way: an unmodified local file is overwritten by a remote update", () => {
+    remoteAdvancedFromV1ToV2();
+    writeOmcFile("a.md", "v1\n");
+
+    shadowRestore([]);
+
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"), "utf8")).toBe("v2\n");
+    expect(fs.existsSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toBe(false);
+  });
+
+  it("3-way: both changed keeps local, writes <file>.remote, and warns", () => {
+    remoteAdvancedFromV1ToV2();
+    writeOmcFile("a.md", "local edit\n");
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    shadowRestore([]);
+    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    stderrSpy.mockRestore();
+
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"), "utf8")).toBe("local edit\n");
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md.remote"), "utf8")).toBe("v2\n");
+    expect(warnings).toContain(
+      "plan-sync: conflict on a.md: kept local, remote copy at a.md.remote",
+    );
+  });
+
+  it("3-way: a locally modified file is not deleted when the remote deleted it", () => {
+    shadowInit([]);
+    writeManifest(["keep.md", "gone.md"]);
+    writeOmcFile("keep.md", "keep me\n");
+    writeOmcFile("gone.md", "delete me\n");
+    shadowPush([]);
+    fs.rmSync(path.join(anchorRepo, ".omc", "gone.md"));
+    shadowPush([]);
+    rewindLocalRef();
+
+    writeOmcFile("gone.md", "local edit\n");
+    shadowRestore([]);
+
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "gone.md"), "utf8")).toBe(
+      "local edit\n",
+    );
+  });
+
   it("throws a clear error when the shadow repo hasn't been initialized", () => {
     expect(() => shadowRestore([])).toThrow(/init --track shadow/);
   });
@@ -101,12 +187,11 @@ describe("restore --track shadow (integration)", () => {
     fs.rmSync(path.join(anchorRepo, ".omc", "gone.md"));
     shadowPush([]);
 
-    switchToFreshMachine();
-
-    // Simulate a pre-existing local copy on this "fresh machine" (e.g. left
-    // over from an earlier restore), so this assertion proves restore
-    // actively deletes it rather than merely observing it was already gone.
-    writeOmcFile("gone.md", "stale copy that restore should delete\n");
+    // This machine last synced the pre-deletion commit and still holds that
+    // unmodified copy, so this assertion proves restore actively deletes it
+    // rather than merely observing it was already gone.
+    rewindLocalRef();
+    writeOmcFile("gone.md", "delete me\n");
 
     shadowRestore([]);
 

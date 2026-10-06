@@ -57,6 +57,105 @@ func captureStderr(t *testing.T, fn func()) string {
 	return out
 }
 
+// rewindLocalRef moves the local shadow ref back one commit (after it was
+// pushed to origin), so Restore sees origin one push ahead of what this
+// machine last synced (the merge base) — as if another machine pushed.
+func rewindLocalRef(f *fixture, shadowRepoPath, refName string) {
+	f.t.Helper()
+	f.git(shadowRepoPath, "--git-dir="+shadowRepoPath, "update-ref", refName, refName+"~1")
+}
+
+// seedRemoteV1ToV2 seeds a.md at v1 then v2, publishes to origin, and
+// rewinds the local ref so this machine's merge base is v1.
+func seedRemoteV1ToV2(t *testing.T, f *fixture) {
+	t.Helper()
+	shadowRepoPath, refName := initAndSeedRef(t, f,
+		map[string]string{"a.md": "v1\n"},
+		map[string]string{"a.md": "v2\n"},
+	)
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	rewindLocalRef(f, shadowRepoPath, refName)
+	f.writeManifest("a.md")
+}
+
+// Ports "3-way: a locally edited, unpushed file is preserved when the
+// remote is unchanged".
+func TestRestorePreservesLocallyEditedFile(t *testing.T) {
+	f := newFixture(t)
+
+	shadowRepoPath, refName := initAndSeedRef(t, f, map[string]string{"a.md": "synced\n"})
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	f.writeManifest("a.md")
+	f.writeOmcFile("a.md", "local edit\n")
+
+	var err error
+	warnings := captureStderr(t, func() { err = Restore(nil) })
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	assertFileContent(t, f.omcPath("a.md"), "local edit\n")
+	assertNotExists(t, f.omcPath("a.md.remote"))
+	if strings.Contains(warnings, "conflict") {
+		t.Fatalf("unexpected conflict warning: %q", warnings)
+	}
+}
+
+// Ports "3-way: an unmodified local file is overwritten by a remote update".
+func TestRestoreOverwritesUnmodifiedFileWithRemoteUpdate(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f)
+	f.writeOmcFile("a.md", "v1\n")
+
+	if err := Restore(nil); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	assertFileContent(t, f.omcPath("a.md"), "v2\n")
+	assertNotExists(t, f.omcPath("a.md.remote"))
+}
+
+// Ports "3-way: both changed keeps local, writes <file>.remote, and warns".
+func TestRestoreBothChangedKeepsLocalAndWritesRemoteCopy(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f)
+	f.writeOmcFile("a.md", "local edit\n")
+
+	var err error
+	warnings := captureStderr(t, func() { err = Restore(nil) })
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	assertFileContent(t, f.omcPath("a.md"), "local edit\n")
+	assertFileContent(t, f.omcPath("a.md.remote"), "v2\n")
+	want := "plan-sync: conflict on a.md: kept local, remote copy at a.md.remote"
+	if !strings.Contains(warnings, want) {
+		t.Fatalf("expected %q in stderr, got: %q", want, warnings)
+	}
+}
+
+// Ports "3-way: a locally modified file is not deleted when the remote
+// deleted it".
+func TestRestoreDoesNotDeleteLocallyModifiedFile(t *testing.T) {
+	f := newFixture(t)
+
+	shadowRepoPath, refName := initAndSeedRef(t, f,
+		map[string]string{"keep.md": "keep me\n", "gone.md": "delete me\n"},
+		map[string]string{"keep.md": "keep me\n"},
+	)
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	rewindLocalRef(f, shadowRepoPath, refName)
+	f.writeManifest("keep.md", "gone.md")
+	f.writeOmcFile("gone.md", "local edit\n")
+
+	if err := Restore(nil); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	assertFileContent(t, f.omcPath("gone.md"), "local edit\n")
+}
+
 // Ports "throws a clear error when the shadow repo hasn't been initialized".
 func TestRestoreFailsWhenShadowRepoNotInitialized(t *testing.T) {
 	newFixture(t)
@@ -73,8 +172,8 @@ func TestRestoreFailsWhenShadowRepoNotInitialized(t *testing.T) {
 // Ports "AC-B2 (genuine): a file deleted locally (manifest left unchanged)
 // then pushed is absent after restore against a fresh shadow clone".
 //
-// Also exercises the tryFetchRef path end-to-end: the fresh machine's
-// shadow repo has no local ref at all, so restore only works if it fetches
+// Also exercises the tryFetchRef path end-to-end: the local ref is one
+// commit behind origin, so restore only sees the deletion if it fetches
 // the ref from origin first.
 func TestRestoreDeletesPathGenuinelySyncedThenRemoved(t *testing.T) {
 	f := newFixture(t)
@@ -84,14 +183,14 @@ func TestRestoreDeletesPathGenuinelySyncedThenRemoved(t *testing.T) {
 		map[string]string{"keep.md": "keep me\n"},
 	)
 	f.pushRefToOrigin(shadowRepoPath, refName)
+	rewindLocalRef(f, shadowRepoPath, refName)
 
 	f.writeManifest("keep.md", "gone.md")
-	f.switchToFreshMachine("genuine-deletion")
 
-	// A pre-existing local copy on this "fresh machine" (e.g. left over
-	// from an earlier restore), so the assertion proves restore actively
-	// deletes it rather than merely observing it was already gone.
-	f.writeOmcFile("gone.md", "stale copy that restore should delete\n")
+	// This machine last synced the pre-deletion commit and still holds that
+	// unmodified copy, so the assertion proves restore actively deletes it
+	// rather than merely observing it was already gone.
+	f.writeOmcFile("gone.md", "delete me\n")
 
 	if err := Restore(nil); err != nil {
 		t.Fatalf("Restore: %v", err)
@@ -130,13 +229,15 @@ func TestRestoreDoesNotDeleteNeverSyncedPath(t *testing.T) {
 func TestRestoreDeletionScopingIsPerPath(t *testing.T) {
 	f := newFixture(t)
 
-	initAndSeedRef(t, f,
+	shadowRepoPath, refName := initAndSeedRef(t, f,
 		map[string]string{"keep.md": "k\n", "was-synced.md": "s\n"},
 		map[string]string{"keep.md": "k\n"},
 	)
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	rewindLocalRef(f, shadowRepoPath, refName)
 
 	f.writeManifest("keep.md", "was-synced.md", "never-synced.md")
-	f.writeOmcFile("was-synced.md", "stale\n")
+	f.writeOmcFile("was-synced.md", "s\n")
 	f.writeOmcFile("never-synced.md", "never backed up\n")
 
 	if err := Restore(nil); err != nil {
@@ -246,11 +347,13 @@ func TestRestoreSupportsExplicitRefOverride(t *testing.T) {
 	}
 	assertFileContent(t, f.omcPath("a.md"), "version one\n")
 
-	// And without the override, the ref tip wins.
+	// Without the override, the rolled-back file now differs from the
+	// merge base (the tip, version two) while the remote hasn't moved, so
+	// it reads as an unpushed local change and is kept.
 	if err := Restore(nil); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	assertFileContent(t, f.omcPath("a.md"), "version two\n")
+	assertFileContent(t, f.omcPath("a.md"), "version one\n")
 }
 
 // Ports "N2: a symlink at a manifest-listed destination path is not

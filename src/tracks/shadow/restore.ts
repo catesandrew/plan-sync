@@ -24,11 +24,15 @@ import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from ".
  *
  * This is a true tree-sync, not an additive overlay:
  *   - every path present in the target tree is (re)written from the
- *     blob's exact bytes;
+ *     blob's exact bytes — unless the on-disk copy differs from the local
+ *     ref's pre-fetch tip (the merge base), i.e. it was edited locally and
+ *     not yet pushed: then local wins, and if the remote also changed, the
+ *     incoming bytes land at `<path>.remote` with a stderr warning;
  *   - every path currently listed in the manifest that is *not* present in
  *     the target tree, but *was* present at some earlier commit reachable
  *     from the target ref (i.e. it was genuinely synced once and is now
- *     genuinely gone), is deleted, if present on disk.
+ *     genuinely gone), is deleted, if present on disk and unchanged from
+ *     the merge base.
  *
  * Deletion is deliberately scoped to (ref history \ target tree), never to
  * (current manifest \ target tree): a path can be manifest-listed and
@@ -58,7 +62,16 @@ export function run(args: string[]): void {
   }
 
   const gitDir = `--git-dir=${shadowRepoPath}`;
-  const refName = refFlag ?? resolveShadowRefName(projectId, rootDir);
+  const derivedRefName = resolveShadowRefName(projectId, rootDir);
+  const refName = refFlag ?? derivedRefName;
+
+  // The local ref tip BEFORE fetching is the last state this machine
+  // synced (pushed or pulled) — the merge base for deciding whether an
+  // on-disk file was edited locally since then. Always the derived ref,
+  // even under --ref, so an explicit restore still can't clobber unpushed
+  // local edits. Absent on a fresh machine: then every differing local
+  // file counts as locally modified.
+  const baseSha = resolveLocalRef(gitDir, derivedRefName);
 
   // On a fresh machine (a shadow repo that was just `init`-ed but never
   // pushed from), the local ref doesn't exist yet — only `origin` knows
@@ -84,6 +97,25 @@ export function run(args: string[]): void {
     }
     const content = readBlob(gitDir, refName, relPath);
     const destPath = path.join(repoRoot, rootDir, relPath);
+    const local = readLocalFile(destPath);
+    if (local?.equals(content)) {
+      continue;
+    }
+    if (local !== undefined) {
+      const base = baseSha ? tryReadBlob(gitDir, baseSha, relPath) : undefined;
+      if (!base?.equals(local)) {
+        // Edited locally since the last sync: keep it (the next push
+        // uploads it). If the remote ALSO changed (or there's no base to
+        // tell), park the incoming copy beside it rather than drop it.
+        if (!base?.equals(content)) {
+          safeWriteFile(omcRoot, `${destPath}.remote`, content);
+          process.stderr.write(
+            `plan-sync: conflict on ${relPath}: kept local, remote copy at ${relPath}.remote\n`,
+          );
+        }
+        continue;
+      }
+    }
     safeWriteFile(omcRoot, destPath, content);
   }
 
@@ -101,6 +133,15 @@ export function run(args: string[]): void {
       continue;
     }
     const destPath = path.join(repoRoot, rootDir, relPath);
+    const local = readLocalFile(destPath);
+    if (local !== undefined) {
+      const base = baseSha ? tryReadBlob(gitDir, baseSha, relPath) : undefined;
+      if (!base?.equals(local)) {
+        // Edited locally since the last sync (or never synced here):
+        // the remote deletion must not destroy those edits.
+        continue;
+      }
+    }
     safeRemove(omcRoot, destPath);
   }
 
@@ -172,6 +213,43 @@ function tryFetchRef(gitDir: string, refName: string): void {
     // Best-effort: no origin, offline, or nothing has ever been pushed.
     // `listTree` below will surface a clear error if the ref truly can't
     // be resolved locally either.
+  }
+}
+
+function resolveLocalRef(gitDir: string, refName: string): string | undefined {
+  try {
+    const out = execFileSync("git", [gitDir, "rev-parse", "--verify", "-q", refName], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the on-disk file's bytes only if it is a regular file (lstat, so a
+ * symlink at the destination reads as "not a local file" and falls through
+ * to safeWriteFile/safeRemove's refusal path, exactly as before).
+ */
+function readLocalFile(destPath: string): Buffer | undefined {
+  try {
+    return fs.lstatSync(destPath).isFile() ? fs.readFileSync(destPath) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `readBlob`, but `undefined` when the path doesn't exist at that commit. */
+function tryReadBlob(gitDir: string, sha: string, relPath: string): Buffer | undefined {
+  try {
+    return execFileSync("git", [gitDir, "show", `${sha}:${relPath}`], {
+      maxBuffer: 100 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return undefined;
   }
 }
 
