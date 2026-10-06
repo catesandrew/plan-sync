@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { parseFlag } from "../../args";
 import {
@@ -27,7 +28,8 @@ import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from ".
  *     blob's exact bytes — unless the on-disk copy differs from the local
  *     ref's pre-fetch tip (the merge base), i.e. it was edited locally and
  *     not yet pushed: then local wins, and if the remote also changed, the
- *     incoming bytes land at `<path>.remote` with a stderr warning;
+ *     two are 3-way merged in place (`git merge-file`; conflict markers on
+ *     overlap), falling back to `<path>.remote` for binary content;
  *   - every path currently listed in the manifest that is *not* present in
  *     the target tree, but *was* present at some earlier commit reachable
  *     from the target ref (i.e. it was genuinely synced once and is now
@@ -105,13 +107,25 @@ export function run(args: string[]): void {
       const base = baseSha ? tryReadBlob(gitDir, baseSha, relPath) : undefined;
       if (!base?.equals(local)) {
         // Edited locally since the last sync: keep it (the next push
-        // uploads it). If the remote ALSO changed (or there's no base to
-        // tell), park the incoming copy beside it rather than drop it.
+        // uploads it). If the remote ALSO changed, 3-way merge (an empty
+        // base when there's none, so differing sides become an add/add
+        // conflict); if merge-file refuses (binary) or errors, park the
+        // incoming copy beside the local one rather than drop it.
         if (!base?.equals(content)) {
-          safeWriteFile(omcRoot, `${destPath}.remote`, content);
-          process.stderr.write(
-            `plan-sync: conflict on ${relPath}: kept local, remote copy at ${relPath}.remote\n`,
-          );
+          const result = mergeFile(local, base ?? Buffer.alloc(0), content);
+          if (!result) {
+            safeWriteFile(omcRoot, `${destPath}.remote`, content);
+            process.stderr.write(
+              `plan-sync: conflict on ${relPath}: kept local, remote copy at ${relPath}.remote\n`,
+            );
+          } else {
+            safeWriteFile(omcRoot, destPath, result.merged);
+            process.stderr.write(
+              result.conflicts === 0
+                ? `plan-sync: merged ${relPath}\n`
+                : `plan-sync: conflict in ${relPath} (${result.conflicts} hunk(s)); resolve markers, then push\n`,
+            );
+          }
         }
         continue;
       }
@@ -250,6 +264,43 @@ function tryReadBlob(gitDir: string, sha: string, relPath: string): Buffer | und
     });
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * 3-way merges via `git merge-file -p` over throwaway temp copies in the OS
+ * tmpdir (never under the root dir; the caller writes the result through
+ * safeWriteFile). Returns the merged bytes plus the conflict-hunk count
+ * (merge-file's exit status, 0 = clean), or `undefined` when merge-file
+ * refuses (binary content) or otherwise errors.
+ */
+function mergeFile(
+  local: Buffer,
+  base: Buffer,
+  incoming: Buffer,
+): { merged: Buffer; conflicts: number } | undefined {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "plan-sync-merge-"));
+  try {
+    const sides = [["local", local], ["base", base], ["remote", incoming]] as const;
+    for (const [name, content] of sides) fs.writeFileSync(path.join(tmpDir, name), content);
+    const argv = ["merge-file", "-p", "-L", "local", "-L", "base", "-L", "remote"];
+    try {
+      const merged = execFileSync("git", [...argv, ...sides.map(([name]) => path.join(tmpDir, name))], {
+        maxBuffer: 100 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return { merged, conflicts: 0 };
+    } catch (err) {
+      // Exit 1..127 = that many conflict hunks, stdout holds the marked-up
+      // merge; anything else (255 = binary/error) is a refusal.
+      const { status, stdout } = err as { status?: number | null; stdout?: Buffer };
+      if (status && status > 0 && status < 128 && stdout) {
+        return { merged: stdout, conflicts: status };
+      }
+      return undefined;
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 

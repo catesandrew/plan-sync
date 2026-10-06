@@ -29,8 +29,10 @@ import (
 //   - every path present in the target tree is (re)written from the blob's
 //     exact bytes — unless the on-disk copy differs from the local ref's
 //     pre-fetch tip (the merge base), i.e. it was edited locally and not
-//     yet pushed: then local wins, and if the remote also changed, the
-//     incoming bytes land at `<path>.remote` with a stderr warning;
+//     yet pushed: then local wins, and if the remote also changed, the two
+//     are 3-way merged in place (`git merge-file`, see mergeFile; conflict
+//     markers on overlap), falling back to `<path>.remote` for binary
+//     content;
 //   - every path currently listed in the manifest that is *not* present in
 //     the target tree, but *was* present at some earlier commit reachable
 //     from the target ref (i.e. it was genuinely synced once and is now
@@ -56,7 +58,7 @@ import (
 //
 // Every write goes through safewrite.SafeWriteFile and every delete through
 // safewrite.SafeRemove; there is no other way this function touches a
-// destination path.
+// destination path (mergeFile's raw writes are OS-tmpdir scratch only).
 //
 // Failure behavior (Phase-1 observability requirement): an unresolvable
 // ref — a corrupt/missing local ref with an unreachable or absent origin —
@@ -158,13 +160,26 @@ func Restore(argv []string) error {
 			base, hasBase := tryReadBlob(gitDir, baseSha, relPath)
 			if !hasBase || !bytes.Equal(base, local) {
 				// Edited locally since the last sync: keep it (the next push
-				// uploads it). If the remote ALSO changed (or there's no
-				// base to tell), park the incoming copy beside it rather
+				// uploads it). If the remote ALSO changed, 3-way merge (an
+				// empty base when there's none, so differing sides become an
+				// add/add conflict); if merge-file refuses (binary) or
+				// errors, park the incoming copy beside the local one rather
 				// than drop it.
 				if !hasBase || !bytes.Equal(base, content) {
-					safewrite.SafeWriteFile(omcRoot, destPath+".remote", content)
-					fmt.Fprintf(os.Stderr,
-						"plan-sync: conflict on %s: kept local, remote copy at %s.remote\n", relPath, relPath)
+					merged, conflicts, ok := mergeFile(local, base, content)
+					switch {
+					case !ok:
+						safewrite.SafeWriteFile(omcRoot, destPath+".remote", content)
+						fmt.Fprintf(os.Stderr,
+							"plan-sync: conflict on %s: kept local, remote copy at %s.remote\n", relPath, relPath)
+					case conflicts == 0:
+						safewrite.SafeWriteFile(omcRoot, destPath, merged)
+						fmt.Fprintf(os.Stderr, "plan-sync: merged %s\n", relPath)
+					default:
+						safewrite.SafeWriteFile(omcRoot, destPath, merged)
+						fmt.Fprintf(os.Stderr,
+							"plan-sync: conflict in %s (%d hunk(s)); resolve markers, then push\n", relPath, conflicts)
+					}
 				}
 				continue
 			}

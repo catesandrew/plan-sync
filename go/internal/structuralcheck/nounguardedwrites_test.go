@@ -54,14 +54,16 @@ var forbiddenPatterns = []*regexp.Regexp{
 // paths built from manifest/glob-expanded entries, which are the ones a
 // hand-edited or malicious manifest line could influence.
 //
-// internal/tracks/sibling/ and internal/tracks/shadow/ contain ZERO such
-// exceptions (confirmed by this test passing with no allowlist entries for
-// either package) — every real destination mutation there, including
+// internal/tracks/sibling/ and internal/tracks/shadow/ contain no
+// DESTINATION exceptions — every real destination mutation there, including
 // shadow/init.go's info/exclude and info/attributes writes, routes through
-// internal/safewrite.
+// internal/safewrite. The single shadow entry below is restore's merge
+// scratch space in the OS tmpdir, isolated in its own file so the
+// exemption can't cover restore.go itself.
 var allowlist = map[string]string{
-	"internal/manifest/manifest.go":     "writes only to manifestPath, a tool-owned config path resolved by the caller (repoRoot+rootDir+.sync-manifest), never to a manifest-ENTRY-derived path — mirrors TS's F2 exception for src/manifest.ts",
-	"internal/syncconfig/syncconfig.go": "writes only to the tool-owned .sync-config.json path resolved by the caller, never to user-controlled content — mirrors TS's F2 exception for src/sync-config.ts",
+	"internal/manifest/manifest.go":       "writes only to manifestPath, a tool-owned config path resolved by the caller (repoRoot+rootDir+.sync-manifest), never to a manifest-ENTRY-derived path — mirrors TS's F2 exception for src/manifest.ts",
+	"internal/tracks/shadow/mergefile.go": "writes and removes only mergeFile's own os.MkdirTemp scratch dir (git merge-file inputs) in the OS tmpdir, never a manifest-entry-derived path — mirrors the TS allowlist's shadow/restore.ts mergeFile entries",
+	"internal/syncconfig/syncconfig.go":   "writes only to the tool-owned .sync-config.json path resolved by the caller, never to user-controlled content — mirrors TS's F2 exception for src/sync-config.ts",
 }
 
 // excludedDirs are packages allowed to contain the real, sanctioned calls

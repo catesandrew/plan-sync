@@ -14,8 +14,8 @@
 //
 // Every destination mutation derived from the sync manifest — and, for
 // belt-and-braces, every file this package writes at all — routes through
-// internal/safewrite. There are no raw os.WriteFile / os.Remove /
-// os.Rename / os.Create / os.OpenFile calls anywhere in this package.
+// internal/safewrite. The only raw os.WriteFile / os.RemoveAll calls in this
+// package are mergefile.go's OS-tmpdir scratch files, never a destination.
 package shadow
 
 import (

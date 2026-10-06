@@ -259,7 +259,19 @@ plan-sync uninstall
 - `pull` materializes the tree at that ref (or a `--ref` override) back
   onto disk under `.omc/`, deleting any manifest-listed path that's
   genuinely absent from the target tree (not merely scan-skipped), and
-  merges the incoming `.sync-manifest` into the local one.
+  merges the incoming `.sync-manifest` into the local one. Unpushed local
+  edits are never clobbered: each file is compared against what this
+  machine last synced (the shadow ref's tip before fetching). An unchanged
+  local file takes the remote version; a locally edited one is kept as-is
+  if the remote didn't change, and otherwise 3-way merged in place with
+  `git merge-file` — `plan-sync: merged <path>` when clean, standard
+  `<<<<<<< local`/`>>>>>>> remote` markers plus a `plan-sync: conflict in
+  <path>` warning when not (resolve the markers before the next `push`,
+  or they'll be synced too). A file never synced on this machine merges
+  against an empty base, so differing content is always a conflict. Binary
+  files can't be merged: the local copy is kept and the incoming one is
+  written beside it as `<path>.remote`. A remote deletion only removes a
+  local file that still matches the last-synced version.
 - `status` prints a per-file report (same four states as the sibling track,
   comparing local content against the pushed ref's tree via `git
   hash-object`), then reports the age of the last successful push, flagging

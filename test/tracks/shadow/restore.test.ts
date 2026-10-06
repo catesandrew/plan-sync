@@ -97,14 +97,27 @@ describe("restore --track shadow (integration)", () => {
   }
 
   /** Pushes v1 then v2 of a.md, then rewinds so this machine's base is v1. */
-  function remoteAdvancedFromV1ToV2(): void {
+  function remoteAdvancedFromV1ToV2(v1: string | Buffer = "v1\n", v2: string | Buffer = "v2\n"): void {
     shadowInit([]);
     writeManifest(["a.md"]);
-    writeOmcFile("a.md", "v1\n");
+    writeOmcFileBuffer("a.md", Buffer.from(v1));
     shadowPush([]);
-    writeOmcFile("a.md", "v2\n");
+    writeOmcFileBuffer("a.md", Buffer.from(v2));
     shadowPush([]);
     rewindLocalRef();
+  }
+
+  /** Runs restore, returning everything it wrote to stderr. */
+  function restoreCapturingStderr(): string {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    shadowRestore([]);
+    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    stderrSpy.mockRestore();
+    return warnings;
+  }
+
+  function readOmc(relPath: string): string {
+    return fs.readFileSync(path.join(anchorRepo, ".omc", relPath), "utf8");
   }
 
   it("3-way: a locally edited, unpushed file is preserved when the remote is unchanged", () => {
@@ -134,20 +147,61 @@ describe("restore --track shadow (integration)", () => {
     expect(fs.existsSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toBe(false);
   });
 
-  it("3-way: both changed keeps local, writes <file>.remote, and warns", () => {
+  it("3-way: both changed, non-overlapping edits merge cleanly in place", () => {
+    remoteAdvancedFromV1ToV2("1\n2\n3\n4\n5\n", "1 remote\n2\n3\n4\n5\n");
+    writeOmcFile("a.md", "1\n2\n3\n4\n5 local\n");
+
+    const warnings = restoreCapturingStderr();
+
+    expect(readOmc("a.md")).toBe("1 remote\n2\n3\n4\n5 local\n");
+    expect(fs.existsSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toBe(false);
+    expect(warnings).toContain("plan-sync: merged a.md\n");
+  });
+
+  it("3-way: both changed, overlapping edits leave conflict markers and warn", () => {
     remoteAdvancedFromV1ToV2();
     writeOmcFile("a.md", "local edit\n");
 
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    shadowRestore([]);
-    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
-    stderrSpy.mockRestore();
+    const warnings = restoreCapturingStderr();
 
-    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"), "utf8")).toBe("local edit\n");
-    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md.remote"), "utf8")).toBe("v2\n");
+    const merged = readOmc("a.md");
+    expect(merged).toContain("<<<<<<< local\nlocal edit\n");
+    expect(merged).toContain("=======\nv2\n>>>>>>> remote\n");
+    expect(fs.existsSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toBe(false);
+    expect(warnings).toContain(
+      "plan-sync: conflict in a.md (1 hunk(s)); resolve markers, then push",
+    );
+  });
+
+  it("3-way: both changed, binary content falls back to keeping local + <file>.remote", () => {
+    remoteAdvancedFromV1ToV2(Buffer.from([0, 1, 2]), Buffer.from([0, 1, 3]));
+    writeOmcFileBuffer("a.md", Buffer.from([0, 1, 4]));
+
+    const warnings = restoreCapturingStderr();
+
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md"))).toEqual(Buffer.from([0, 1, 4]));
+    expect(fs.readFileSync(path.join(anchorRepo, ".omc", "a.md.remote"))).toEqual(
+      Buffer.from([0, 1, 3]),
+    );
     expect(warnings).toContain(
       "plan-sync: conflict on a.md: kept local, remote copy at a.md.remote",
     );
+  });
+
+  it("3-way: no base (never synced on this machine) and differing content is an add/add conflict", () => {
+    shadowInit([]);
+    writeManifest(["a.md"]);
+    writeOmcFile("a.md", "remote\n");
+    shadowPush([]);
+
+    switchToFreshMachine();
+    writeOmcFile("a.md", "local\n");
+    const warnings = restoreCapturingStderr();
+
+    const merged = readOmc("a.md");
+    expect(merged).toContain("<<<<<<< local\nlocal\n");
+    expect(merged).toContain("=======\nremote\n>>>>>>> remote\n");
+    expect(warnings).toContain("plan-sync: conflict in a.md (1 hunk(s)); resolve markers, then push");
   });
 
   it("3-way: a locally modified file is not deleted when the remote deleted it", () => {

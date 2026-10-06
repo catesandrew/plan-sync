@@ -67,11 +67,11 @@ func rewindLocalRef(f *fixture, shadowRepoPath, refName string) {
 
 // seedRemoteV1ToV2 seeds a.md at v1 then v2, publishes to origin, and
 // rewinds the local ref so this machine's merge base is v1.
-func seedRemoteV1ToV2(t *testing.T, f *fixture) {
+func seedRemoteV1ToV2(t *testing.T, f *fixture, v1, v2 string) {
 	t.Helper()
 	shadowRepoPath, refName := initAndSeedRef(t, f,
-		map[string]string{"a.md": "v1\n"},
-		map[string]string{"a.md": "v2\n"},
+		map[string]string{"a.md": v1},
+		map[string]string{"a.md": v2},
 	)
 	f.pushRefToOrigin(shadowRepoPath, refName)
 	rewindLocalRef(f, shadowRepoPath, refName)
@@ -104,7 +104,7 @@ func TestRestorePreservesLocallyEditedFile(t *testing.T) {
 // Ports "3-way: an unmodified local file is overwritten by a remote update".
 func TestRestoreOverwritesUnmodifiedFileWithRemoteUpdate(t *testing.T) {
 	f := newFixture(t)
-	seedRemoteV1ToV2(t, f)
+	seedRemoteV1ToV2(t, f, "v1\n", "v2\n")
 	f.writeOmcFile("a.md", "v1\n")
 
 	if err := Restore(nil); err != nil {
@@ -115,24 +115,84 @@ func TestRestoreOverwritesUnmodifiedFileWithRemoteUpdate(t *testing.T) {
 	assertNotExists(t, f.omcPath("a.md.remote"))
 }
 
-// Ports "3-way: both changed keeps local, writes <file>.remote, and warns".
-func TestRestoreBothChangedKeepsLocalAndWritesRemoteCopy(t *testing.T) {
-	f := newFixture(t)
-	seedRemoteV1ToV2(t, f)
-	f.writeOmcFile("a.md", "local edit\n")
-
+// restoreCapturingStderr runs Restore, failing the test on error, and
+// returns everything it wrote to stderr.
+func restoreCapturingStderr(t *testing.T) string {
+	t.Helper()
 	var err error
 	warnings := captureStderr(t, func() { err = Restore(nil) })
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
+	return warnings
+}
 
-	assertFileContent(t, f.omcPath("a.md"), "local edit\n")
-	assertFileContent(t, f.omcPath("a.md.remote"), "v2\n")
-	want := "plan-sync: conflict on a.md: kept local, remote copy at a.md.remote"
-	if !strings.Contains(warnings, want) {
-		t.Fatalf("expected %q in stderr, got: %q", want, warnings)
+func assertContains(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if !strings.Contains(haystack, needle) {
+		t.Fatalf("expected %q in %q", needle, haystack)
 	}
+}
+
+// Ports "3-way: both changed, non-overlapping edits merge cleanly in place".
+func TestRestoreBothChangedNonOverlappingMergesCleanly(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f, "1\n2\n3\n4\n5\n", "1 remote\n2\n3\n4\n5\n")
+	f.writeOmcFile("a.md", "1\n2\n3\n4\n5 local\n")
+
+	warnings := restoreCapturingStderr(t)
+
+	assertFileContent(t, f.omcPath("a.md"), "1 remote\n2\n3\n4\n5 local\n")
+	assertNotExists(t, f.omcPath("a.md.remote"))
+	assertContains(t, warnings, "plan-sync: merged a.md\n")
+}
+
+// Ports "3-way: both changed, overlapping edits leave conflict markers and
+// warn".
+func TestRestoreBothChangedOverlappingLeavesConflictMarkers(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f, "v1\n", "v2\n")
+	f.writeOmcFile("a.md", "local edit\n")
+
+	warnings := restoreCapturingStderr(t)
+
+	merged, _ := os.ReadFile(f.omcPath("a.md"))
+	assertContains(t, string(merged), "<<<<<<< local\nlocal edit\n")
+	assertContains(t, string(merged), "=======\nv2\n>>>>>>> remote\n")
+	assertNotExists(t, f.omcPath("a.md.remote"))
+	assertContains(t, warnings, "plan-sync: conflict in a.md (1 hunk(s)); resolve markers, then push")
+}
+
+// Ports "3-way: both changed, binary content falls back to keeping local +
+// <file>.remote".
+func TestRestoreBothChangedBinaryFallsBackToRemoteCopy(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f, "\x00\x01\x02", "\x00\x01\x03")
+	f.writeOmcFile("a.md", "\x00\x01\x04")
+
+	warnings := restoreCapturingStderr(t)
+
+	assertFileContent(t, f.omcPath("a.md"), "\x00\x01\x04")
+	assertFileContent(t, f.omcPath("a.md.remote"), "\x00\x01\x03")
+	assertContains(t, warnings, "plan-sync: conflict on a.md: kept local, remote copy at a.md.remote")
+}
+
+// Ports "3-way: no base (never synced on this machine) and differing content
+// is an add/add conflict".
+func TestRestoreNoBaseDifferingContentIsAddAddConflict(t *testing.T) {
+	f := newFixture(t)
+	shadowRepoPath, refName := initAndSeedRef(t, f, map[string]string{"a.md": "remote\n"})
+	f.pushRefToOrigin(shadowRepoPath, refName)
+	f.writeManifest("a.md")
+
+	f.switchToFreshMachine("no-base")
+	f.writeOmcFile("a.md", "local\n")
+	warnings := restoreCapturingStderr(t)
+
+	merged, _ := os.ReadFile(f.omcPath("a.md"))
+	assertContains(t, string(merged), "<<<<<<< local\nlocal\n")
+	assertContains(t, string(merged), "=======\nremote\n>>>>>>> remote\n")
+	assertContains(t, warnings, "plan-sync: conflict in a.md (1 hunk(s)); resolve markers, then push")
 }
 
 // Ports "3-way: a locally modified file is not deleted when the remote

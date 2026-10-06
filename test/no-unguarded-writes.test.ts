@@ -41,6 +41,16 @@ const ALLOWLIST: Array<{ file: string; snippet: string; reason: string }> = [
     reason: "cleans up its own throwaway GIT_INDEX_FILE temp directory, not a manifest path",
   },
   {
+    file: "shadow/restore.ts",
+    snippet: "fs.writeFileSync(path.join(tmpDir, name), content)",
+    reason: "writes mergeFile's own throwaway git-merge-file inputs into an OS-tmpdir mkdtemp directory, not a manifest path",
+  },
+  {
+    file: "shadow/restore.ts",
+    snippet: "fs.rmSync(tmpDir",
+    reason: "cleans up mergeFile's own OS-tmpdir mkdtemp directory, not a manifest path",
+  },
+  {
     file: "shadow/uninstall.ts",
     snippet: "fs.rmSync(shadowRepoPath",
     reason: "removes the entire shadow repo state directory on uninstall, not a per-file manifest path",
