@@ -39,6 +39,16 @@ or put a plain `plan-sync` on your `PATH`:
 npm link
 ```
 
+To build **both** the TS CLI and the Go binary (`plan-sync-go`) and link them
+globally in one step (re-run after each `git pull`):
+
+```
+scripts/install.sh
+```
+
+`plan-sync` is linked via `npm link`; `plan-sync-go` is symlinked into
+`$BIN_DIR` (default `~/.local/bin`).
+
 Everything below assumes `plan-sync` is on your `PATH`; substitute the
 `node .../dist/cli.js` form if you didn't `npm link`.
 
