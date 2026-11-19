@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  resolveLegacyProjectId,
   resolveProjectId,
   resolveShadowRefName,
   resolveShadowRepoPath,
@@ -109,12 +110,12 @@ describe("resolveProjectId", () => {
     return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   }
 
-  function initRepoWithCommit(dir: string): void {
+  function initRepoWithCommit(dir: string, message = "root"): void {
     fs.mkdirSync(dir, { recursive: true });
     git(dir, ["init", "--quiet"]);
     git(dir, ["config", "user.email", "test@example.com"]);
     git(dir, ["config", "user.name", "Test User"]);
-    git(dir, ["commit", "--allow-empty", "--quiet", "-m", "root"]);
+    git(dir, ["commit", "--allow-empty", "--quiet", "-m", message]);
   }
 
   it("derives an id from the repo's root commit hash", () => {
@@ -173,24 +174,28 @@ describe("resolveProjectId", () => {
     expect(id1).toBe(id2);
   });
 
-  it("resolves deterministically for a repo with multiple root commits", () => {
+  it("keeps a multi-root repo apart from a sibling that shares only some of its roots", () => {
     const repoA = path.join(tmpDir, "repo-a");
     const repoB = path.join(tmpDir, "repo-b");
     initRepoWithCommit(repoA);
-    initRepoWithCommit(repoB);
+    initRepoWithCommit(repoB, "other root");
 
-    const rootA = gitOut(repoA, ["rev-list", "--max-parents=0", "HEAD"]);
-    const rootB = gitOut(repoB, ["rev-list", "--max-parents=0", "HEAD"]);
-    const expectedRoot = [rootA, rootB].sort()[0];
+    const roots = [
+      gitOut(repoA, ["rev-list", "--max-parents=0", "HEAD"]),
+      gitOut(repoB, ["rev-list", "--max-parents=0", "HEAD"]),
+    ].sort();
 
-    // Merge repoB's history into repoA, producing a repo with two root
-    // commits (rootA and rootB), then verify the resolved id always matches
-    // whichever root hash sorts first, regardless of which side merged in.
+    // A sibling clone of repoB: single root, so it keeps the legacy id.
+    const sibling = path.join(tmpDir, "sibling");
+    git(tmpDir, ["clone", "--quiet", repoB, sibling]);
+    // Merge repoB into repoA: repoA now has both roots.
     git(repoA, ["fetch", "--quiet", repoB]);
     git(repoA, ["merge", "--allow-unrelated-histories", "--quiet", "-m", "merge", "FETCH_HEAD"]);
 
-    const id = resolveProjectId(repoA);
-
-    expect(id).toBe(expectedRoot.slice(0, 12));
+    const merged = resolveProjectId(repoA);
+    expect(resolveLegacyProjectId(repoA)).toBe((roots[0] as string).slice(0, 12));
+    expect(resolveProjectId(sibling)).toBe(gitOut(sibling, ["rev-list", "--max-parents=0", "HEAD"]).slice(0, 12));
+    expect(merged).not.toBe(resolveProjectId(sibling));
+    expect(resolveProjectId(repoA)).toBe(merged);
   });
 });

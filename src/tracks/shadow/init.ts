@@ -5,6 +5,7 @@ import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
 import { writeDefaultTrack } from "../../sync-config";
+import { seedFromLegacyRef } from "./migrate";
 import { resolveProjectId, resolveShadowRepoPath } from "./paths";
 
 /**
@@ -35,6 +36,7 @@ export function run(args: string[]): void {
   ensureBareRepo(shadowRepoPath);
   configureShadowRepo(shadowRepoPath, repoRoot);
   wireOrigin(shadowRepoPath, repoRoot, remoteFlag);
+  seedFromLegacyRef(repoRoot, rootDir);
   writeDefaultTrack(repoRoot, "shadow", rootDir);
 }
 

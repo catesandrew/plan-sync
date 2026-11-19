@@ -5,6 +5,7 @@ import { parseFlag } from "../../args";
 import { defaultManifestPath, resolveManifestSyncCandidates } from "../../manifest";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
+import { adoptLegacyShadow } from "./migrate";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 import { fetchIncomingSha } from "./restore";
 
@@ -34,6 +35,7 @@ export function run(args: string[]): void {
 
   const repoRoot = resolveRepoRoot();
   const rootDir = resolveRootDir(repoRoot, rootFlag);
+  adoptLegacyShadow(repoRoot, rootDir);
   const projectId = resolveProjectId(repoRoot);
   const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 

@@ -11,6 +11,7 @@ import {
 import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
+import { adoptLegacyShadow } from "./migrate";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 import { hasConflictMarkers, scanForSecrets } from "./scan";
 
@@ -44,6 +45,7 @@ export function run(args: string[]): void {
   const { value: rootFlag } = parseFlag(args, "root");
   const repoRoot = resolveRepoRoot();
   const rootDir = resolveRootDir(repoRoot, rootFlag);
+  adoptLegacyShadow(repoRoot, rootDir);
   const projectId = resolveProjectId(repoRoot);
   const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
 

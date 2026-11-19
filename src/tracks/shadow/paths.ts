@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveRepoRoot } from "../../repo-root";
@@ -102,12 +103,7 @@ const PROJECT_ID_LENGTH = 12;
  * clone/machine deterministically picks the same one regardless of commit
  * order.
  */
-export function resolveProjectId(
-  repoRoot: string = resolveRepoRoot(),
-  options: ResolveProjectIdOptions = {},
-): string {
-  const run = options.execFileSyncFn ?? execFileSync;
-
+function resolveRootHashes(repoRoot: string, run: typeof execFileSync): string[] {
   const output = run("git", ["-C", repoRoot, "rev-list", "--max-parents=0", "HEAD"], {
     encoding: "utf8",
   });
@@ -118,10 +114,42 @@ export function resolveProjectId(
     .filter((line) => line.length > 0)
     .sort();
 
-  const rootHash = rootHashes[0];
-  if (!rootHash) {
+  if (rootHashes.length === 0) {
     throw new Error(`no root commit found for repository at '${repoRoot}'`);
   }
+  return rootHashes;
+}
 
-  return rootHash.slice(0, PROJECT_ID_LENGTH);
+/**
+ * The original ID: the first 12 chars of the lexicographically smallest root
+ * commit. Two repos that share that root but differ in their other roots
+ * (e.g. one was merged into the other) collide on it, so `resolveProjectId`
+ * hashes the whole root set when there is more than one. Kept to find and
+ * migrate shadow repos and refs created under the old scheme.
+ */
+export function resolveLegacyProjectId(
+  repoRoot: string = resolveRepoRoot(),
+  options: ResolveProjectIdOptions = {},
+): string {
+  const [first] = resolveRootHashes(repoRoot, options.execFileSyncFn ?? execFileSync);
+  return (first as string).slice(0, PROJECT_ID_LENGTH);
+}
+
+/**
+ * Independent of the origin remote, so renaming or moving the remote never
+ * changes the ID. A single-root repo keeps the legacy ID; a multi-root repo
+ * hashes its sorted root set, which keeps it apart from a sibling that shares
+ * only some roots.
+ */
+export function resolveProjectId(
+  repoRoot: string = resolveRepoRoot(),
+  options: ResolveProjectIdOptions = {},
+): string {
+  const rootHashes = resolveRootHashes(repoRoot, options.execFileSyncFn ?? execFileSync);
+  if (rootHashes.length === 1) return (rootHashes[0] as string).slice(0, PROJECT_ID_LENGTH);
+  return crypto
+    .createHash("sha1")
+    .update(rootHashes.join("\n"))
+    .digest("hex")
+    .slice(0, PROJECT_ID_LENGTH);
 }

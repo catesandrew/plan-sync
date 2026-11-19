@@ -82,6 +82,9 @@ func Restore(argv []string) error {
 	if err != nil {
 		return err
 	}
+	if err := adoptLegacyShadow(repoRoot, rootDir); err != nil {
+		return err
+	}
 	projectID, err := shadowpaths.ResolveProjectId(repoRoot)
 	if err != nil {
 		return err

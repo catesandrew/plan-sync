@@ -73,6 +73,9 @@ func Init(argv []string) error {
 	if err := wireOrigin(shadowRepoPath, repoRoot, remoteFlag); err != nil {
 		return err
 	}
+	if err := seedFromLegacyRef(repoRoot, rootDir); err != nil {
+		return err
+	}
 
 	return syncconfig.WriteDefaultTrack(repoRoot, args.TrackShadow, rootDir)
 }

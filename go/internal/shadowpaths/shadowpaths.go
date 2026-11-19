@@ -8,6 +8,8 @@
 package shadowpaths
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,10 +43,10 @@ const projectIDLength = 12
 // deterministically picks the same one regardless of commit order. This
 // matches the TypeScript implementation's `.sort()` + `[0]` exactly — the two
 // binaries must agree on the project id for the same repo.
-func ResolveProjectId(repoRoot string) (string, error) {
+func resolveRootHashes(repoRoot string) ([]string, error) {
 	out, err := exec.Command("git", "-C", repoRoot, "rev-list", "--max-parents=0", "HEAD").Output()
 	if err != nil {
-		return "", fmt.Errorf("listing root commits for repository at %q: %w", repoRoot, err)
+		return nil, fmt.Errorf("listing root commits for repository at %q: %w", repoRoot, err)
 	}
 
 	var rootHashes []string
@@ -53,21 +55,47 @@ func ResolveProjectId(repoRoot string) (string, error) {
 			rootHashes = append(rootHashes, trimmed)
 		}
 	}
-	// Lexical sort, first wins — deterministic across clones and machines.
 	sort.Strings(rootHashes)
 
 	if len(rootHashes) == 0 {
-		return "", fmt.Errorf("no root commit found for repository at %q", repoRoot)
+		return nil, fmt.Errorf("no root commit found for repository at %q", repoRoot)
 	}
-
-	rootHash := rootHashes[0]
-	if len(rootHash) < projectIDLength {
-		return "", fmt.Errorf(
+	if len(rootHashes[0]) < projectIDLength {
+		return nil, fmt.Errorf(
 			"root commit hash %q for repository at %q is shorter than %d characters",
-			rootHash, repoRoot, projectIDLength,
+			rootHashes[0], repoRoot, projectIDLength,
 		)
 	}
-	return rootHash[:projectIDLength], nil
+	return rootHashes, nil
+}
+
+// ResolveLegacyProjectId is the original ID: the first 12 chars of the
+// smallest root commit. Two repos that share that root but differ in their
+// other roots collide on it, so ResolveProjectId hashes the whole root set
+// when there is more than one. Kept to find and migrate shadow repos and
+// refs created under the old scheme.
+func ResolveLegacyProjectId(repoRoot string) (string, error) {
+	rootHashes, err := resolveRootHashes(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	return rootHashes[0][:projectIDLength], nil
+}
+
+// ResolveProjectId is independent of the origin remote, so renaming or moving
+// the remote never changes the ID. A single-root repo keeps the legacy ID; a
+// multi-root repo hashes its sorted root set (newline-joined, SHA-1, matching
+// the TypeScript implementation byte for byte).
+func ResolveProjectId(repoRoot string) (string, error) {
+	rootHashes, err := resolveRootHashes(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(rootHashes) == 1 {
+		return rootHashes[0][:projectIDLength], nil
+	}
+	sum := sha1.Sum([]byte(strings.Join(rootHashes, "\n")))
+	return hex.EncodeToString(sum[:])[:projectIDLength], nil
 }
 
 // ResolveShadowRefName resolves the shadow-track ref name for

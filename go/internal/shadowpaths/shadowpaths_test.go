@@ -1,6 +1,8 @@
 package shadowpaths
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"os/user"
@@ -78,11 +80,13 @@ func TestResolveProjectIdIsStableAcrossSubsequentCommits(t *testing.T) {
 	}
 }
 
-// TestResolveProjectIdPicksLexicallyFirstOfMultipleRootCommits exercises the
-// multi-root tie-break: a repo whose history was joined via
-// `git merge --allow-unrelated-histories` has two root commits, and both
-// implementations must sort them lexically and take the first.
-func TestResolveProjectIdPicksLexicallyFirstOfMultipleRootCommits(t *testing.T) {
+// TestResolveProjectIdHashesTheRootSetOfAMultiRootRepo exercises the
+// multi-root rule: a repo whose history was joined via
+// `git merge --allow-unrelated-histories` has two root commits. The legacy id
+// is the lexically-first root's prefix; the current id is the SHA-1 of the
+// sorted, newline-joined root set, which keeps the repo apart from a sibling
+// that shares only some of its roots. TypeScript must produce the same value.
+func TestResolveProjectIdHashesTheRootSetOfAMultiRootRepo(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	firstRoot := commitFile(t, dir, "a.txt", "first history")
@@ -105,14 +109,25 @@ func TestResolveProjectIdPicksLexicallyFirstOfMultipleRootCommits(t *testing.T) 
 		t.Fatalf("test setup produced a single root commit %q", roots[0])
 	}
 	sort.Strings(roots)
-	want := roots[0][:12]
+	sum := sha1.Sum([]byte(strings.Join(roots, "\n")))
+	want := hex.EncodeToString(sum[:])[:12]
 
 	got, err := ResolveProjectId(dir)
 	if err != nil {
 		t.Fatalf("ResolveProjectId: unexpected error: %v", err)
 	}
 	if got != want {
-		t.Errorf("ResolveProjectId = %q, want lexically-first root prefix %q (roots %v)", got, want, roots)
+		t.Errorf("ResolveProjectId = %q, want root-set hash %q (roots %v)", got, want, roots)
+	}
+	legacy, err := ResolveLegacyProjectId(dir)
+	if err != nil {
+		t.Fatalf("ResolveLegacyProjectId: unexpected error: %v", err)
+	}
+	if legacy != roots[0][:12] {
+		t.Errorf("ResolveLegacyProjectId = %q, want lexically-first root prefix %q", legacy, roots[0][:12])
+	}
+	if got == legacy {
+		t.Errorf("multi-root id %q must differ from the legacy id", got)
 	}
 }
 
