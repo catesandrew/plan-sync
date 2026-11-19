@@ -12,6 +12,7 @@ import {
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
 import { safeRemove, safeWriteFile } from "../../safe-write";
+import { checkShadowOwner } from "./owner";
 import { adoptLegacyShadow } from "./migrate";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
 import { hasConflictMarkers } from "./scan";
@@ -60,6 +61,7 @@ export function run(args: string[]): void {
   adoptLegacyShadow(repoRoot, rootDir);
   const projectId = resolveProjectId(repoRoot);
   const shadowRepoPath = resolveShadowRepoPath(projectId, rootDir);
+  checkShadowOwner(shadowRepoPath, repoRoot, true);
 
   if (!fs.existsSync(shadowRepoPath)) {
     throw new Error(

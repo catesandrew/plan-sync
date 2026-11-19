@@ -67,6 +67,9 @@ func Init(argv []string) error {
 	if err := ensureBareRepo(shadowRepoPath); err != nil {
 		return err
 	}
+	if err := checkShadowOwner(shadowRepoPath, repoRoot, true); err != nil {
+		return err
+	}
 	if err := configureShadowRepo(shadowRepoPath, repoRoot); err != nil {
 		return err
 	}

@@ -93,6 +93,9 @@ func Restore(argv []string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkShadowOwner(shadowRepoPath, repoRoot, true); err != nil {
+		return err
+	}
 
 	// os.Lstat, not os.Stat: a symlink planted at the shadow repo path
 	// should be reported as present-but-whatever-it-is rather than silently
