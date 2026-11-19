@@ -257,12 +257,16 @@ plan-sync uninstall
 - `init --track shadow` creates a bare shadow git repo (idempotent), excludes
   `.omc/` via `.git/info/exclude`, and wires an `origin` remote — from
   `--remote` if given, otherwise inferred from the anchor repo's own
-  `origin`. Persists the default track to `.omc/.sync-config.json`.
+  `origin`, and records which checkout owns the shadow repo (see below).
+  Persists the default track to `.omc/.sync-config.json`.
 - `push` stages every manifest-listed file (plus `.sync-manifest` itself,
-  unconditionally), runs an advisory secret-shape scan (JWT, PEM header,
+  unconditionally), runs an advisory secret-shape scan (JWT, PEM key block,
   SSN, API-key shapes) per file and skips — with a logged warning, keeping
   the file's prior synced content rather than deleting it — any file that
-  matches, commits the resulting tree, and pushes to
+  matches. It applies the same skip to a file that still contains the
+  unresolved `<<<<<<< local`/`>>>>>>> remote` markers a conflicted `pull`
+  leaves behind (reported as `conflict-markers`), so a half-resolved merge is
+  never uploaded. It then commits the resulting tree and pushes to
   `refs/plan-sync/<project-id>/<root>/data`. If nothing actually changed since the last
   push, it's a genuine no-op (`"nothing changed since the last push"`) —
   that message means it worked and detected no delta, not that it failed.
@@ -276,12 +280,19 @@ plan-sync uninstall
   if the remote didn't change, and otherwise 3-way merged in place with
   `git merge-file` — `plan-sync: merged <path>` when clean, standard
   `<<<<<<< local`/`>>>>>>> remote` markers plus a `plan-sync: conflict in
-  <path>` warning when not (resolve the markers before the next `push`,
-  or they'll be synced too). A file never synced on this machine merges
+  <path>` warning when not (resolve the markers before the next `push`;
+  `push` skips a file that still has them, and a later `pull` leaves such a
+  file alone — `plan-sync: <path> still has unresolved conflict markers; not
+  merging again` — instead of nesting a second set of markers inside it).
+  A file never synced on this machine merges
   against an empty base, so differing content is always a conflict. Binary
   files can't be merged: the local copy is kept and the incoming one is
   written beside it as `<path>.remote`. A remote deletion only removes a
-  local file that still matches the last-synced version.
+  local file that still matches the last-synced version. Before the first
+  `push` from anywhere there is nothing to pull: when the remote answers and
+  has no shadow ref, `pull` prints `nothing to pull` and exits 0. An
+  unreachable remote, or an explicit `--ref` that doesn't resolve, still
+  fails.
   `pull --dry-run` changes nothing (no files, no manifest, and it doesn't
   move the local shadow ref). It prints one line per file that would
   change (`would-write`, `would-keep-local`, `would-merge`,
@@ -324,13 +335,34 @@ Set `PLAN_SYNC_STATE_DIR` (or `XDG_CACHE_HOME`) to control where that data lives
 for example, to centralize shadow repos for multiple projects outside the
 default cache location.
 
-`<project-id>` is the first 12 hex characters of the repo's root commit hash
+`<project-id>` comes from the repo's root commit(s)
 (`git rev-list --max-parents=0 HEAD`) — git's own content-addressed identity
 for "this is the same repository history" — not anything derived from the
-`origin` remote URL. That makes identity stable across repo renames, remote
-URL changes (including switching between SSH and HTTPS, or moving to a
-different host entirely), and independently computable on every machine/clone
-of the repo, since they all share the same root commit.
+`origin` remote URL. A repo with a single root commit uses the first 12 hex
+characters of that hash. A repo with several root commits (for example one
+that had another repo's history merged in) uses the first 12 hex characters
+of the SHA-1 of its sorted root hashes joined by newlines, so it stays apart
+from a sibling repo that shares only some of those roots. Either way the id
+is stable across repo renames, remote URL changes (including switching
+between SSH and HTTPS, or moving to a different host entirely), and
+independently computable on every machine/clone of the repo.
+
+**Upgrading.** Repos with several root commits get a new id. The first
+command run in such a repo finds the shadow repo created under the old id,
+creates a fresh one for the new id wired to that repo's own `origin`, and
+seeds it from that origin's old-id ref, so history carries over. The old
+directory is left untouched because a sibling repo may still use it. The old
+remote ref is not deleted and can be removed by hand once nothing uses it.
+
+**One shadow repo, one checkout.** Each shadow repo records its owner — the
+checkout's git common directory, so linked worktrees of one repo still share
+it — in its git config (`plan-sync.owner`). If a different checkout resolves to
+the same shadow repo, `init`, `push` and `pull` (and `status`, which only
+checks) fail with `shadow repo at <path> belongs to <owner>, not <you>`
+instead of overwriting each other's ref or pushing into each other's remote.
+An owner that has no recorded value yet is claimed on first `init`, `push` or
+`pull`; an owner whose directory no longer exists (the repo was moved) is
+reclaimed automatically.
 
 The advisory content scan is a backstop, not a substitute for judgment about
 what you `allow`: it only catches a few specific secret shapes, and a file
