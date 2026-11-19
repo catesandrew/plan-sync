@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -152,6 +153,14 @@ func Restore(argv []string) error {
 		fmt.Fprintf(os.Stdout, "%s %s%s\n", action, relPath, detail)
 	}
 
+	// Nothing pushed yet (no local ref, and a reachable origin has none): an
+	// empty remote is not an error. An unreachable origin or an explicit --ref
+	// still fails loudly in listTree.
+	if refFlag == "" && tryGit(gitDir, "rev-parse", "--verify", "-q", refName) == "" && remoteLacksRef(gitDir, refName) {
+		fmt.Fprintln(os.Stdout, "plan-sync: nothing to pull (no shadow ref yet; nothing has been pushed)")
+		return nil
+	}
+
 	targetPaths, err := listTree(gitDir, refName)
 	if err != nil {
 		return err
@@ -193,6 +202,14 @@ func Restore(argv []string) error {
 				if hasBase && bytes.Equal(base, content) {
 					if dryRun {
 						report("would-keep-local", relPath, "")
+					}
+				} else if hasConflictMarkers(local) {
+					// Merging again would nest a second set of markers in the first.
+					if dryRun {
+						report("would-keep-local", relPath, "")
+					} else {
+						fmt.Fprintf(os.Stderr,
+							"plan-sync: %s still has unresolved conflict markers; not merging again\n", relPath)
 					}
 				} else {
 					merged, conflicts, ok := mergeFile(local, base, content)
@@ -379,6 +396,25 @@ func fetchIncomingSha(gitDir, refName string) string {
 func tryFetchRef(gitDir, refName string) {
 	_, _ = runGit(gitDir, "fetch", "origin", "+"+refName+":"+refName)
 }
+
+// remoteLacksRef is true only when origin answered and has no refName; any
+// error (unreachable, no origin) is false so the caller keeps failing loudly.
+func remoteLacksRef(gitDir, refName string) bool {
+	out, err := runGit(gitDir, "ls-remote", "origin", refName)
+	return err == nil && strings.TrimSpace(out) == ""
+}
+
+// hasConflictMarkers reports whether b holds the unresolved merge-file
+// markers pull writes (labels local/remote). Matching the labels, not bare
+// `<<<<<<<`, keeps docs that merely discuss conflict markers syncable.
+func hasConflictMarkers(b []byte) bool {
+	return conflictOpen.Match(b) && conflictClose.Match(b)
+}
+
+var (
+	conflictOpen  = regexp.MustCompile(`(?m)^<<<<<<< local\r?$`)
+	conflictClose = regexp.MustCompile(`(?m)^>>>>>>> remote\r?$`)
+)
 
 // listTree enumerates every path in the tree at refName. It is called
 // before any destination is touched, so an unresolvable ref aborts the

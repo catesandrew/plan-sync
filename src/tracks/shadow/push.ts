@@ -12,7 +12,7 @@ import { parseFlag } from "../../args";
 import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
-import { scanForSecrets } from "./scan";
+import { hasConflictMarkers, scanForSecrets } from "./scan";
 
 /**
  * `plan-sync push --track shadow [--root <dir>]`
@@ -114,6 +114,9 @@ export function run(args: string[]): void {
       const content = fs.readFileSync(filePath, "utf8");
 
       const matches = scanForSecrets(content);
+      // Never upload an unresolved pull conflict: it would overwrite the clean
+      // synced copy and be re-merged (nesting markers) on every machine.
+      if (hasConflictMarkers(content)) matches.push("conflict-markers");
       if (matches.length > 0) {
         // The scan is advisory only — it must never have delete authority.
         // If this path existed in the previous tip's tree, carry that prior

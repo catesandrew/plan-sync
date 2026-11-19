@@ -174,6 +174,28 @@ describe("restore --track shadow (integration)", () => {
     );
   });
 
+  it("pull before any push is a no-op, not an error", () => {
+    shadowInit([]);
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    expect(() => shadowRestore([])).not.toThrow();
+    const printed = out.mock.calls.map((c) => String(c[0])).join("");
+    out.mockRestore();
+    expect(printed).toContain("nothing to pull");
+  });
+
+  it("3-way: a second pull does not re-merge a file that still has conflict markers", () => {
+    remoteAdvancedFromV1ToV2();
+    writeOmcFile("a.md", "local edit\n");
+    restoreCapturingStderr();
+    const afterFirst = readOmc("a.md");
+    rewindLocalRef(); // as if the remote moved again since this machine's last sync
+
+    const warnings = restoreCapturingStderr();
+
+    expect(readOmc("a.md")).toBe(afterFirst);
+    expect(warnings).toContain("a.md still has unresolved conflict markers; not merging again");
+  });
+
   it("3-way: both changed, binary content falls back to keeping local + <file>.remote", () => {
     remoteAdvancedFromV1ToV2(Buffer.from([0, 1, 2]), Buffer.from([0, 1, 3]));
     writeOmcFileBuffer("a.md", Buffer.from([0, 1, 4]));

@@ -21,12 +21,12 @@ const PATTERN_CLASSES: PatternClass[] = [
     label: "jwt",
     pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
   },
-  // PEM header shape: a "-----BEGIN" marker followed eventually by a
-  // closing "-----" (either the matching END marker or another dashed
-  // marker) somewhere later in the content.
+  // PEM shape: a "-----BEGIN <TYPE>-----" line, optional RFC 1421 header
+  // lines (e.g. Proc-Type), then a base64 body line. Requiring the body keeps
+  // prose or regexes that merely mention the header from matching.
   {
     label: "pem",
-    pattern: /-----BEGIN[\s\S]*?-----/,
+    pattern: /-----BEGIN [A-Z0-9 ]+-----\r?\n(?:[A-Za-z-]+: .*\r?\n)*\r?\n?[A-Za-z0-9+/=]{16,}\r?\n/,
   },
   // SSN shape: NNN-NN-NNNN. A shape match only — not validated against
   // actual SSA allocation rules.
@@ -42,6 +42,16 @@ const PATTERN_CLASSES: PatternClass[] = [
     pattern: /\b(sk|pk|api[_-]?key)[_-][A-Za-z0-9]{16,}\b/i,
   },
 ];
+
+/**
+ * True when `content` holds the unresolved `git merge-file` markers that
+ * pull writes (labels `local`/`remote`). Matching the labels, not bare
+ * `<<<<<<<`, keeps docs that merely discuss conflict markers syncable.
+ */
+export function hasConflictMarkers(content: string | Buffer): boolean {
+  const text = content.toString("utf8");
+  return /^<<<<<<< local$/m.test(text) && /^>>>>>>> remote$/m.test(text);
+}
 
 /**
  * Scans `content` for any of the advisory secret-shape pattern classes

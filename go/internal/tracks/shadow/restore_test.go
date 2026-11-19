@@ -165,6 +165,35 @@ func TestRestoreBothChangedOverlappingLeavesConflictMarkers(t *testing.T) {
 	assertContains(t, warnings, "plan-sync: conflict in a.md (1 hunk(s)); resolve markers, then push")
 }
 
+func TestRestoreSecondPullDoesNotReMergeConflictMarkers(t *testing.T) {
+	f := newFixture(t)
+	seedRemoteV1ToV2(t, f, "v1\n", "v2\n")
+	f.writeOmcFile("a.md", "local edit\n")
+	restoreCapturingStderr(t)
+	first, _ := os.ReadFile(f.omcPath("a.md"))
+	// as if the remote moved again since this machine's last sync
+	rewindLocalRef(f, f.shadowRepoPath(".omc"), f.refName(".omc"))
+
+	warnings := restoreCapturingStderr(t)
+
+	second, _ := os.ReadFile(f.omcPath("a.md"))
+	if string(first) != string(second) {
+		t.Fatalf("second pull changed the file:\n%q\n->\n%q", first, second)
+	}
+	assertContains(t, warnings, "a.md still has unresolved conflict markers; not merging again")
+}
+
+func TestRestoreBeforeAnyPushIsNoOp(t *testing.T) {
+	f := newFixture(t)
+	initAndSeedRef(t, f)
+	var err error
+	out := captureStdout(t, func() { err = Restore(nil) })
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	assertContains(t, out, "nothing to pull")
+}
+
 // Ports "3-way: both changed, binary content falls back to keeping local +
 // <file>.remote".
 func TestRestoreBothChangedBinaryFallsBackToRemoteCopy(t *testing.T) {

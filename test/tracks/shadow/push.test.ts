@@ -162,6 +162,23 @@ describe("push --track shadow (integration)", () => {
     expect(secondParents).toBe(firstSha);
   });
 
+  it("does not upload a file holding unresolved pull conflict markers; keeps the prior synced copy", () => {
+    shadowInit([]);
+    writeManifest(["notes.md"]);
+    writeOmcFile("notes.md", "clean planning notes\n");
+    shadowPush([]);
+
+    writeOmcFile("notes.md", "<<<<<<< local\nmine\n=======\ntheirs\n>>>>>>> remote\n");
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    shadowPush([]);
+    const warnings = stderrSpy.mock.calls.map((call) => String(call[0])).join("");
+    stderrSpy.mockRestore();
+
+    const { shadowRepoPath, refName } = projectRef();
+    expect(gitDirArgs(shadowRepoPath, ["show", `${refName}:notes.md`])).toBe("clean planning notes");
+    expect(warnings).toContain("conflict-markers");
+  });
+
   it("retains a scan-matched file's prior content in the new tree rather than dropping it (non-destructive scan-skip)", () => {
     shadowInit([]);
     writeManifest(["notes.md"]);

@@ -13,6 +13,7 @@ import { resolveRepoRoot } from "../../repo-root";
 import { resolveRootDir } from "../../root";
 import { safeRemove, safeWriteFile } from "../../safe-write";
 import { resolveProjectId, resolveShadowRefName, resolveShadowRepoPath } from "./paths";
+import { hasConflictMarkers } from "./scan";
 
 /**
  * `plan-sync restore --track shadow [--ref <sha-or-ref>] [--root <dir>]`
@@ -102,6 +103,14 @@ export function run(args: string[]): void {
     process.stdout.write(`${action} ${relPath}${detail}\n`);
   };
 
+  // Nothing pushed yet (no local ref, and a reachable origin has none): an
+  // empty remote is not an error. An unreachable origin or an explicit --ref
+  // still fails loudly in listTree.
+  if (!refFlag && !resolveLocalRef(gitDir, refName) && remoteLacksRef(gitDir, refName)) {
+    process.stdout.write("plan-sync: nothing to pull (no shadow ref yet; nothing has been pushed)\n");
+    return;
+  }
+
   const targetPaths = listTree(gitDir, refName);
   const targetSet = new Set(targetPaths);
   const omcRoot = path.join(repoRoot, rootDir);
@@ -129,6 +138,10 @@ export function run(args: string[]): void {
         // incoming copy beside the local one rather than drop it.
         if (base?.equals(content)) {
           if (dryRun) report("would-keep-local", relPath);
+        } else if (hasConflictMarkers(local)) {
+          // Merging again would nest a second set of markers in the first.
+          if (dryRun) report("would-keep-local", relPath);
+          else process.stderr.write(`plan-sync: ${relPath} still has unresolved conflict markers; not merging again\n`);
         } else {
           const result = mergeFile(local, base ?? Buffer.alloc(0), content);
           if (dryRun) {
@@ -282,6 +295,21 @@ function tryFetchRef(gitDir: string, refName: string): void {
     // Best-effort: no origin, offline, or nothing has ever been pushed.
     // `listTree` below will surface a clear error if the ref truly can't
     // be resolved locally either.
+  }
+}
+
+// True only when origin answered and has no refName; any error (unreachable,
+// no origin) is false so the caller keeps failing loudly.
+function remoteLacksRef(gitDir: string, refName: string): boolean {
+  try {
+    return (
+      execFileSync("git", [gitDir, "ls-remote", "origin", refName], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim() === ""
+    );
+  } catch {
+    return false;
   }
 }
 

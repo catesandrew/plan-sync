@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { scanForSecrets } from "../../../src/tracks/shadow/scan";
+import { hasConflictMarkers, scanForSecrets } from "../../../src/tracks/shadow/scan";
+
+describe("hasConflictMarkers", () => {
+  it("detects pull's local/remote markers but not prose about conflict markers", () => {
+    expect(hasConflictMarkers("a\n<<<<<<< local\nx\n=======\ny\n>>>>>>> remote\nb\n")).toBe(true);
+    expect(hasConflictMarkers("Markers look like:\n<<<<<<< HEAD\n>>>>>>> branch\n")).toBe(false);
+    expect(hasConflictMarkers("plain\n")).toBe(false);
+  });
+});
 
 describe("scanForSecrets", () => {
   it("flags a JWT-shaped string", () => {
@@ -9,8 +17,14 @@ describe("scanForSecrets", () => {
   });
 
   it("flags a PEM header", () => {
-    const content = "-----BEGIN PRIVATE KEY-----\nMIIBVQ...\n-----END PRIVATE KEY-----\n";
+    const content =
+      "-----BEGIN PRIVATE KEY-----\nMIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA\n-----END PRIVATE KEY-----\n";
     expect(scanForSecrets(content)).toEqual(["pem"]);
+  });
+
+  it("does not flag prose or a regex that only mentions a PEM header", () => {
+    expect(scanForSecrets("The scan matches `-----BEGIN` lines; see -----BEGIN CERTIFICATE----- docs.\n")).toEqual([]);
+    expect(scanForSecrets("pattern: /-----BEGIN [A-Z ]+-----/\nnext line\n")).toEqual([]);
   });
 
   it("flags an SSN-shaped string", () => {
